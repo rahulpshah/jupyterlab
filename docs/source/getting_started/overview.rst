@@ -11,8 +11,16 @@ JupyterLab is a next-generation web-based user interface for Project Jupyter.
 
 JupyterLab enables you to work with documents and activities such as
 :ref:`Jupyter notebooks <notebook>`, text editors, terminals, and custom
-components in a flexible, integrated, and extensible manner. You can
-:ref:`arrange <interface>` multiple documents and activities side by side in the
+components in a flexible, integrated, and extensible manner. For a demonstration
+of JupyterLab and its features, you can view this video:
+
+.. raw:: html
+
+  <div class="jp-youtube-video">
+    <iframe src="https://www.youtube-nocookie.com/embed/A5YyoCKxEOU?rel=0&amp;showinfo=0" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+  </div>
+
+You can :ref:`arrange <interface>` multiple documents and activities side by side in the
 work area using tabs and splitters. Documents and activities integrate with each
 other, enabling new workflows for interactive computing, for example:
 
@@ -52,8 +60,12 @@ classic Jupyter Notebook.
 JupyterLab Releases
 ~~~~~~~~~~~~~~~~~~~
 
-The current release of JupyterLab is suitable for general daily use. Please
-review the :ref:`changelog` for detailed descriptions of each release.
+Since JupyterLab 0.32 (February 2018), the releases of JupyterLab are suitable
+for general daily use by both Jupyter novices and users experienced with the
+Classic Notebook interface. As of the 1.0 release (June 2019), it is
+additionally ready for extension writers who wish to further customize the
+JupyterLab experience for others. Please review the :ref:`changelog` for
+detailed descriptions of each release.
 
 The extension developer API is evolving, and we also are currently iterating on UI/UX improvements.
 We appreciate feedback on our `GitHub issues page <https://github.com/jupyterlab/jupyterlab/issues>`__

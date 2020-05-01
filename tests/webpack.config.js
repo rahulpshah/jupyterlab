@@ -1,8 +1,9 @@
 // Use sourcemaps if in watch or debug mode;
-var devtool = 'eval';
-if (process.argv.indexOf('--watch') !== -1) {
-  devtool = 'cheap-module-eval-sourcemap';
-}
+const devtool =
+  process.argv.indexOf('--watch') !== -1 ||
+  process.argv.indexOf('--debug') !== -1
+    ? 'source-map-inline'
+    : 'eval';
 
 module.exports = {
   resolve: {
@@ -11,6 +12,9 @@ module.exports = {
   bail: true,
   devtool: devtool,
   mode: 'development',
+  node: {
+    fs: 'empty'
+  },
   module: {
     rules: [
       {
@@ -45,8 +49,22 @@ module.exports = {
       },
       { test: /\.eot(\?v=\d+\.\d+\.\d+)?$/, use: 'file-loader' },
       {
+        // In .css files, svg is loaded as a data URI.
         test: /\.svg(\?v=\d+\.\d+\.\d+)?$/,
-        use: 'url-loader?limit=10000&mimetype=image/svg+xml'
+        issuer: { test: /\.css$/ },
+        use: {
+          loader: 'svg-url-loader',
+          options: { encoding: 'none', limit: 10000 }
+        }
+      },
+      {
+        // In .ts and .tsx files (both of which compile to .js), svg files
+        // must be loaded as a raw string instead of data URIs.
+        test: /\.svg(\?v=\d+\.\d+\.\d+)?$/,
+        issuer: { test: /\.js$/ },
+        use: {
+          loader: 'raw-loader'
+        }
       }
     ]
   }

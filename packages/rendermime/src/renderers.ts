@@ -1,4 +1,4 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
@@ -13,7 +13,7 @@ import { URLExt } from '@jupyterlab/coreutils';
 
 import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 
-import { toArray } from '@phosphor/algorithm';
+import { toArray } from '@lumino/algorithm';
 
 import escape from 'lodash.escape';
 
@@ -73,7 +73,9 @@ export function renderHTML(options: renderHTML.IOptions): Promise<void> {
       runButton.onclick = event => {
         host.innerHTML = originalSource;
         Private.evalInnerHTMLScriptTags(host);
-        host.removeChild(host.firstChild);
+        if (host.firstChild) {
+          host.removeChild(host.firstChild);
+        }
       };
       container.appendChild(warning);
       container.appendChild(runButton);
@@ -161,7 +163,7 @@ export function renderImage(
   options: renderImage.IRenderOptions
 ): Promise<void> {
   // Unpack the options.
-  let {
+  const {
     host,
     mimeType,
     source,
@@ -175,7 +177,7 @@ export function renderImage(
   host.textContent = '';
 
   // Create the image element.
-  let img = document.createElement('img');
+  const img = document.createElement('img');
 
   // Set the source of the image.
   img.src = `data:${mimeType};base64,${source}`;
@@ -261,7 +263,7 @@ export function renderLatex(
   options: renderLatex.IRenderOptions
 ): Promise<void> {
   // Unpack the options.
-  let { host, source, shouldTypeset, latexTypesetter } = options;
+  const { host, source, shouldTypeset, latexTypesetter } = options;
 
   // Set the source on the node.
   host.textContent = source;
@@ -316,7 +318,7 @@ export async function renderMarkdown(
   options: renderMarkdown.IRenderOptions
 ): Promise<void> {
   // Unpack the options.
-  let { host, source, ...others } = options;
+  const { host, source, ...others } = options;
 
   // Clear the content if there is no source.
   if (!source) {
@@ -325,7 +327,7 @@ export async function renderMarkdown(
   }
 
   // Separate math from normal markdown text.
-  let parts = removeMath(source);
+  const parts = removeMath(source);
 
   // Convert the markdown to HTML.
   let html = await Private.renderMarked(parts['text']);
@@ -418,6 +420,12 @@ export function renderSVG(options: renderSVG.IRenderOptions): Promise<void> {
     return Promise.resolve(undefined);
   }
 
+  // Add missing SVG namespace (if actually missing)
+  const patt = '<svg[^>]+xmlns=[^>]+svg';
+  if (source.search(patt) < 0) {
+    source = source.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+  }
+
   // Render in img so that user can save it easily
   const img = new Image();
   img.src = `data:image/svg+xml,${encodeURIComponent(source)}`;
@@ -460,6 +468,35 @@ export namespace renderSVG {
 }
 
 /**
+ * Replace URLs with links.
+ *
+ * @param content - The plain text content.
+ *
+ * @returns The content where all URLs have been replaced with corresponding links.
+ */
+function autolink(content: string): string {
+  // Taken from Visual Studio Code:
+  // https://github.com/microsoft/vscode/blob/9f709d170b06e991502153f281ec3c012add2e42/src/vs/workbench/contrib/debug/browser/linkDetector.ts#L17-L18
+  const controlCodes = '\\u0000-\\u0020\\u007f-\\u009f';
+  const webLinkRegex = new RegExp(
+    '(?:[a-zA-Z][a-zA-Z0-9+.-]{2,}:\\/\\/|data:|www\\.)[^\\s' +
+      controlCodes +
+      '"]{2,}[^\\s' +
+      controlCodes +
+      '"\')}\\],:;.!?]',
+    'ug'
+  );
+  return content.replace(webLinkRegex, url => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.textContent = url;
+    a.rel = 'noopener';
+    a.target = '_blank';
+    return a.outerHTML;
+  });
+}
+
+/**
  * Render text into a host node.
  *
  * @params options - The options for rendering.
@@ -468,13 +505,17 @@ export namespace renderSVG {
  */
 export function renderText(options: renderText.IRenderOptions): Promise<void> {
   // Unpack the options.
-  let { host, source } = options;
+  const { host, sanitizer, source } = options;
 
   // Create the HTML content.
-  let content = Private.ansiSpan(source);
+  const content = sanitizer.sanitize(Private.ansiSpan(source), {
+    allowedTags: ['span']
+  });
 
-  // Set the inner HTML for the host node.
-  host.innerHTML = `<pre>${content}</pre>`;
+  // Set the sanitized content for the host node.
+  const pre = document.createElement('pre');
+  pre.innerHTML = autolink(content);
+  host.appendChild(pre);
 
   // Return the rendered promise.
   return Promise.resolve(undefined);
@@ -492,6 +533,11 @@ export namespace renderText {
      * The host node for the text content.
      */
     host: HTMLElement;
+
+    /**
+     * The html sanitizer for untrusted source.
+     */
+    sanitizer: ISanitizer;
 
     /**
      * The source text to render.
@@ -514,22 +560,22 @@ namespace Private {
    */
   export function evalInnerHTMLScriptTags(host: HTMLElement): void {
     // Create a snapshot of the current script nodes.
-    let scripts = toArray(host.getElementsByTagName('script'));
+    const scripts = toArray(host.getElementsByTagName('script'));
 
     // Loop over each script node.
-    for (let script of scripts) {
+    for (const script of scripts) {
       // Skip any scripts which no longer have a parent.
       if (!script.parentNode) {
         continue;
       }
 
       // Create a new script node which will be clone.
-      let clone = document.createElement('script');
+      const clone = document.createElement('script');
 
       // Copy the attributes into the clone.
-      let attrs = script.attributes;
+      const attrs = script.attributes;
       for (let i = 0, n = attrs.length; i < n; ++i) {
-        let { name, value } = attrs[i];
+        const { name, value } = attrs[i];
         clone.setAttribute(name, value);
       }
 
@@ -566,10 +612,10 @@ namespace Private {
    */
   export function handleDefaults(
     node: HTMLElement,
-    resolver?: IRenderMime.IResolver
+    resolver?: IRenderMime.IResolver | null
   ): void {
     // Handle anchor elements.
-    let anchors = node.getElementsByTagName('a');
+    const anchors = node.getElementsByTagName('a');
     for (let i = 0; i < anchors.length; i++) {
       const el = anchors[i];
       // skip when processing a elements inside svg
@@ -577,21 +623,23 @@ namespace Private {
       if (!(el instanceof HTMLAnchorElement)) {
         continue;
       }
-      let path = el.href;
+      const path = el.href;
       const isLocal =
         resolver && resolver.isLocal
           ? resolver.isLocal(path)
           : URLExt.isLocal(path);
-      if (isLocal) {
-        el.target = '_self';
-      } else {
-        el.target = '_blank';
+      // set target attribute if not already present
+      if (!el.target) {
+        el.target = isLocal ? '_self' : '_blank';
+      }
+      // set rel as 'noopener' for non-local anchors
+      if (!isLocal) {
         el.rel = 'noopener';
       }
     }
 
     // Handle image elements.
-    let imgs = node.getElementsByTagName('img');
+    const imgs = node.getElementsByTagName('img');
     for (let i = 0; i < imgs.length; i++) {
       if (!imgs[i].alt) {
         imgs[i].alt = 'Image';
@@ -616,22 +664,22 @@ namespace Private {
     linkHandler: IRenderMime.ILinkHandler | null
   ): Promise<void> {
     // Set up an array to collect promises.
-    let promises: Promise<void>[] = [];
+    const promises: Promise<void>[] = [];
 
     // Handle HTML Elements with src attributes.
-    let nodes = node.querySelectorAll('*[src]');
+    const nodes = node.querySelectorAll('*[src]');
     for (let i = 0; i < nodes.length; i++) {
       promises.push(handleAttr(nodes[i] as HTMLElement, 'src', resolver));
     }
 
     // Handle anchor elements.
-    let anchors = node.getElementsByTagName('a');
+    const anchors = node.getElementsByTagName('a');
     for (let i = 0; i < anchors.length; i++) {
       promises.push(handleAnchor(anchors[i], resolver, linkHandler));
     }
 
     // Handle link elements.
-    let links = node.getElementsByTagName('link');
+    const links = node.getElementsByTagName('link');
     for (let i = 0; i < links.length; i++) {
       promises.push(handleAttr(links[i], 'href', resolver));
     }
@@ -644,13 +692,13 @@ namespace Private {
    * Apply ids to headers.
    */
   export function headerAnchors(node: HTMLElement): void {
-    let headerNames = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
-    for (let headerType of headerNames) {
-      let headers = node.getElementsByTagName(headerType);
+    const headerNames = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+    for (const headerType of headerNames) {
+      const headers = node.getElementsByTagName(headerType);
       for (let i = 0; i < headers.length; i++) {
-        let header = headers[i];
-        header.id = header.textContent.replace(/ /g, '-');
-        let anchor = document.createElement('a');
+        const header = headers[i];
+        header.id = (header.textContent ?? '').replace(/ /g, '-');
+        const anchor = document.createElement('a');
         anchor.target = '_self';
         anchor.textContent = '¶';
         anchor.href = '#' + header.id;
@@ -668,7 +716,7 @@ namespace Private {
     name: 'src' | 'href',
     resolver: IRenderMime.IResolver
   ): Promise<void> {
-    let source = node.getAttribute(name) || '';
+    const source = node.getAttribute(name) || '';
     const isLocal = resolver.isLocal
       ? resolver.isLocal(source)
       : URLExt.isLocal(source);
@@ -716,7 +764,7 @@ namespace Private {
       return Promise.resolve(undefined);
     }
     // Remove the hash until we can handle it.
-    let hash = anchor.hash;
+    const hash = anchor.hash;
     if (hash) {
       // Handle internal link in the file.
       if (hash === href) {
@@ -763,11 +811,10 @@ namespace Private {
     marked.setOptions({
       gfm: true,
       sanitize: false,
-      tables: true,
       // breaks: true; We can't use GFM breaks as it causes problems with tables
       langPrefix: `cm-s-${CodeMirrorEditor.defaultConfig.theme} language-`,
       highlight: (code, lang, callback) => {
-        let cb = (err: Error | null, code: string) => {
+        const cb = (err: Error | null, code: string) => {
           if (callback) {
             callback(err, code);
           }
@@ -779,22 +826,22 @@ namespace Private {
         }
         Mode.ensure(lang)
           .then(spec => {
-            let el = document.createElement('div');
+            const el = document.createElement('div');
             if (!spec) {
-              console.log(`No CodeMirror mode: ${lang}`);
+              console.error(`No CodeMirror mode: ${lang}`);
               return cb(null, code);
             }
             try {
               Mode.run(code, spec.mime, el);
               return cb(null, el.innerHTML);
             } catch (err) {
-              console.log(`Failed to highlight ${lang} code`, err);
+              console.error(`Failed to highlight ${lang} code`, err);
               return cb(err, code);
             }
           })
           .catch(err => {
-            console.log(`No CodeMirror mode: ${lang}`);
-            console.log(`Require CodeMirror mode error: ${err}`);
+            console.error(`No CodeMirror mode: ${lang}`);
+            console.error(`Require CodeMirror mode error: ${err}`);
             return cb(null, code);
           });
         return code;
@@ -802,7 +849,7 @@ namespace Private {
     });
   }
 
-  let ANSI_COLORS = [
+  const ANSI_COLORS = [
     'ansi-black',
     'ansi-red',
     'ansi-green',
@@ -835,8 +882,8 @@ namespace Private {
     out: Array<string>
   ): void {
     if (chunk) {
-      let classes = [];
-      let styles = [];
+      const classes = [];
+      const styles = [];
 
       if (bold && typeof fg === 'number' && 0 <= fg && fg < 8) {
         fg += 8; // Bold text uses "intense" colors
@@ -893,18 +940,18 @@ namespace Private {
     let r;
     let g;
     let b;
-    let n = numbers.shift();
+    const n = numbers.shift();
     if (n === 2 && numbers.length >= 3) {
       // 24-bit RGB
-      r = numbers.shift();
-      g = numbers.shift();
-      b = numbers.shift();
+      r = numbers.shift()!;
+      g = numbers.shift()!;
+      b = numbers.shift()!;
       if ([r, g, b].some(c => c < 0 || 255 < c)) {
         throw new RangeError('Invalid range for RGB colors');
       }
     } else if (n === 5 && numbers.length >= 1) {
       // 256 colors
-      let idx = numbers.shift();
+      const idx = numbers.shift()!;
       if (idx < 0) {
         throw new RangeError('Color index must be >= 0');
       } else if (idx < 16) {
@@ -938,15 +985,15 @@ namespace Private {
    * This is supposed to have the same behavior as nbconvert.filters.ansi2html()
    */
   export function ansiSpan(str: string): string {
-    let ansiRe = /\x1b\[(.*?)([@-~])/g;
+    const ansiRe = /\x1b\[(.*?)([@-~])/g;
     let fg: number | Array<number> = [];
     let bg: number | Array<number> = [];
     let bold = false;
     let underline = false;
     let inverse = false;
     let match;
-    let out: Array<string> = [];
-    let numbers = [];
+    const out: Array<string> = [];
+    const numbers = [];
     let start = 0;
 
     str = escape(str);
@@ -955,9 +1002,9 @@ namespace Private {
     // tslint:disable-next-line
     while ((match = ansiRe.exec(str))) {
       if (match[2] === 'm') {
-        let items = match[1].split(';');
+        const items = match[1].split(';');
         for (let i = 0; i < items.length; i++) {
-          let item = items[i];
+          const item = items[i];
           if (item === '') {
             numbers.push(0);
           } else if (item.search(/^\d+$/) !== -1) {
@@ -971,12 +1018,12 @@ namespace Private {
       } else {
         // Ignored: Not a color code
       }
-      let chunk = str.substring(start, match.index);
+      const chunk = str.substring(start, match.index);
       pushColoredChunk(chunk, fg, bg, bold, underline, inverse, out);
       start = ansiRe.lastIndex;
 
       while (numbers.length) {
-        let n = numbers.shift();
+        const n = numbers.shift();
         switch (n) {
           case 0:
             fg = bg = [];

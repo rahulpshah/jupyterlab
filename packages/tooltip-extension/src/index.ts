@@ -3,11 +3,11 @@
 
 import { Kernel, KernelMessage, Session } from '@jupyterlab/services';
 
-import { find } from '@phosphor/algorithm';
+import { find, toArray } from '@lumino/algorithm';
 
-import { JSONObject } from '@phosphor/coreutils';
+import { JSONObject } from '@lumino/coreutils';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import { Text } from '@jupyterlab/coreutils';
 
@@ -106,8 +106,8 @@ const consoles: JupyterFrontEndPlugin<void> = {
         }
 
         const anchor = parent.console;
-        const editor = anchor.promptCell.editor;
-        const kernel = anchor.session.kernel;
+        const editor = anchor.promptCell?.editor;
+        const kernel = anchor.sessionContext.session?.kernel;
         const rendermime = anchor.rendermime;
 
         // If all components necessary for rendering exist, create a tooltip.
@@ -141,9 +141,9 @@ const notebooks: JupyterFrontEndPlugin<void> = {
         }
 
         const anchor = parent.content;
-        const editor = anchor.activeCell.editor;
-        const kernel = parent.session.kernel;
-        const rendermime = parent.rendermime;
+        const editor = anchor.activeCell?.editor;
+        const kernel = parent.sessionContext.session?.kernel;
+        const rendermime = anchor.rendermime;
 
         // If all components necessary for rendering exist, create a tooltip.
         if (!!editor && !!kernel && !!rendermime) {
@@ -170,7 +170,7 @@ const files: JupyterFrontEndPlugin<void> = {
     // Keep a list of active ISessions so that we can
     // clean them up when they are no longer needed.
     const activeSessions: {
-      [id: string]: Session.ISession;
+      [id: string]: Session.ISessionConnection;
     } = {};
 
     const sessions = app.serviceManager.sessions;
@@ -196,7 +196,7 @@ const files: JupyterFrontEndPlugin<void> = {
             delete activeSessions[file.id];
             oldSession.dispose();
           }
-          const session = sessions.connectTo(model);
+          const session = sessions.connectTo({ model });
           activeSessions[file.id] = session;
         } else {
           const session = activeSessions[file.id];
@@ -207,9 +207,7 @@ const files: JupyterFrontEndPlugin<void> = {
         }
       });
     };
-    void Session.listRunning().then(models => {
-      onRunningChanged(sessions, models);
-    });
+    onRunningChanged(sessions, toArray(sessions.running()));
     sessions.runningChanged.connect(onRunningChanged);
 
     // Clean up after a widget when it is disposed
@@ -234,8 +232,8 @@ const files: JupyterFrontEndPlugin<void> = {
         if (!kernel) {
           return;
         }
-        const anchor = parent.content;
-        const editor = anchor.editor;
+        const anchor = parent!.content;
+        const editor = anchor?.editor;
 
         // If all components necessary for rendering exist, create a tooltip.
         if (!!editor && !!kernel && !!rendermime) {
@@ -291,25 +289,25 @@ namespace Private {
    * Fetch a tooltip's content from the API server.
    */
   export function fetch(options: IFetchOptions): Promise<JSONObject> {
-    let { detail, editor, kernel } = options;
-    let code = editor.model.value.text;
-    let position = editor.getCursorPosition();
-    let offset = Text.jsIndexToCharIndex(editor.getOffsetAt(position), code);
+    const { detail, editor, kernel } = options;
+    const code = editor.model.value.text;
+    const position = editor.getCursorPosition();
+    const offset = Text.jsIndexToCharIndex(editor.getOffsetAt(position), code);
 
     // Clear hints if the new text value is empty or kernel is unavailable.
     if (!code || !kernel) {
       return Promise.reject(void 0);
     }
 
-    let contents: KernelMessage.IInspectRequest = {
+    const contents: KernelMessage.IInspectRequestMsg['content'] = {
       code,
       cursor_pos: offset,
       detail_level: detail || 0
     };
-    let current = ++pending;
+    const current = ++pending;
 
     return kernel.requestInspect(contents).then(msg => {
-      let value = msg.content;
+      const value = msg.content;
 
       // If a newer request is pending, bail.
       if (current !== pending) {

@@ -7,7 +7,7 @@ import { Base64ModelFactory } from '@jupyterlab/docregistry';
 
 import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 
-import { Token } from '@phosphor/coreutils';
+import { Token } from '@lumino/coreutils';
 
 import { JupyterFrontEnd, JupyterFrontEndPlugin } from './frontend';
 
@@ -25,21 +25,18 @@ export class JupyterLab extends JupyterFrontEnd<ILabShell> {
    * Construct a new JupyterLab object.
    */
   constructor(options: JupyterLab.IOptions = { shell: new LabShell() }) {
-    super({ shell: options.shell || new LabShell() });
+    super({ ...options, shell: options.shell || new LabShell() });
     this.restored = this.shell.restored
       .then(() => undefined)
       .catch(() => undefined);
 
     // Create an IInfo dictionary from the options to override the defaults.
-    const info = Object.keys(JupyterLab.defaultInfo).reduce(
-      (acc, val) => {
-        if (val in options) {
-          (acc as any)[val] = JSON.parse(JSON.stringify((options as any)[val]));
-        }
-        return acc;
-      },
-      {} as Partial<JupyterLab.IInfo>
-    );
+    const info = Object.keys(JupyterLab.defaultInfo).reduce((acc, val) => {
+      if (val in options) {
+        (acc as any)[val] = JSON.parse(JSON.stringify((options as any)[val]));
+      }
+      return acc;
+    }, {} as Partial<JupyterLab.IInfo>);
 
     // Populate application info.
     this._info = { ...JupyterLab.defaultInfo, ...info };
@@ -82,7 +79,7 @@ export class JupyterLab extends JupyterFrontEnd<ILabShell> {
     this.docRegistry.addModelFactory(new Base64ModelFactory());
 
     if (options.mimeExtensions) {
-      for (let plugin of createRendermimePlugins(options.mimeExtensions)) {
+      for (const plugin of createRendermimePlugins(options.mimeExtensions)) {
         this.registerPlugin(plugin);
       }
     }
@@ -238,14 +235,17 @@ export namespace JupyterLab {
   export const defaultPaths: JupyterFrontEnd.IPaths = {
     urls: {
       base: PageConfig.getOption('baseUrl'),
-      defaultWorkspace: PageConfig.getOption('defaultWorkspace'),
       notFound: PageConfig.getOption('notFoundUrl'),
-      page: PageConfig.getOption('pageUrl'),
-      public: PageConfig.getOption('publicUrl'),
+      app: PageConfig.getOption('appUrl'),
+      static: PageConfig.getOption('staticUrl'),
       settings: PageConfig.getOption('settingsUrl'),
       themes: PageConfig.getOption('themesUrl'),
       tree: PageConfig.getOption('treeUrl'),
-      workspaces: PageConfig.getOption('workspacesUrl')
+      workspaces: PageConfig.getOption('workspacesUrl'),
+      hubHost: PageConfig.getOption('hubHost') || undefined,
+      hubPrefix: PageConfig.getOption('hubPrefix') || undefined,
+      hubUser: PageConfig.getOption('hubUser') || undefined,
+      hubServerName: PageConfig.getOption('hubServerName') || undefined
     },
     directories: {
       appSettings: PageConfig.getOption('appSettingsDir'),

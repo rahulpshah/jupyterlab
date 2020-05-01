@@ -3,11 +3,11 @@
 
 import { KernelMessage } from '@jupyterlab/services';
 
-import { IDisposable } from '@phosphor/disposable';
+import { IDisposable } from '@lumino/disposable';
 
-import { Signal } from '@phosphor/signaling';
+import { Signal } from '@lumino/signaling';
 
-import { IClientSession } from '@jupyterlab/apputils';
+import { ISessionContext } from '@jupyterlab/apputils';
 
 import { CodeEditor } from '@jupyterlab/codeeditor';
 
@@ -16,9 +16,9 @@ import { CodeEditor } from '@jupyterlab/codeeditor';
  */
 export interface IConsoleHistory extends IDisposable {
   /**
-   * The client session used by the foreign handler.
+   * The session context used by the foreign handler.
    */
-  readonly session: IClientSession;
+  readonly sessionContext: ISessionContext;
 
   /**
    * The current editor used by the history widget.
@@ -78,15 +78,15 @@ export class ConsoleHistory implements IConsoleHistory {
    * Construct a new console history object.
    */
   constructor(options: ConsoleHistory.IOptions) {
-    this.session = options.session;
+    this.sessionContext = options.sessionContext;
     void this._handleKernel();
-    this.session.kernelChanged.connect(this._handleKernel, this);
+    this.sessionContext.kernelChanged.connect(this._handleKernel, this);
   }
 
   /**
    * The client session used by the foreign handler.
    */
-  readonly session: IClientSession;
+  readonly sessionContext: ISessionContext;
 
   /**
    * The current editor used by the history manager.
@@ -99,7 +99,7 @@ export class ConsoleHistory implements IConsoleHistory {
       return;
     }
 
-    let prev = this._editor;
+    const prev = this._editor;
     if (prev) {
       prev.edgeRequested.disconnect(this.onEdgeRequest, this);
       prev.model.value.changed.disconnect(this.onTextChange, this);
@@ -156,7 +156,7 @@ export class ConsoleHistory implements IConsoleHistory {
 
     --this._cursor;
     this._cursor = Math.max(0, this._cursor);
-    let content = this._filtered[this._cursor];
+    const content = this._filtered[this._cursor];
     return Promise.resolve(content);
   }
 
@@ -180,7 +180,7 @@ export class ConsoleHistory implements IConsoleHistory {
 
     ++this._cursor;
     this._cursor = Math.min(this._filtered.length - 1, this._cursor);
-    let content = this._filtered[this._cursor];
+    const content = this._filtered[this._cursor];
     return Promise.resolve(content);
   }
 
@@ -224,10 +224,12 @@ export class ConsoleHistory implements IConsoleHistory {
     this._history.length = 0;
     let last = '';
     let current = '';
-    for (let i = 0; i < value.content.history.length; i++) {
-      current = (value.content.history[i] as string[])[2];
-      if (current !== last) {
-        this._history.push((last = current));
+    if (value.content.status === 'ok') {
+      for (let i = 0; i < value.content.history.length; i++) {
+        current = (value.content.history[i] as string[])[2];
+        if (current !== last) {
+          this._history.push((last = current));
+        }
       }
     }
     // Reset the history navigation cursor back to the bottom.
@@ -252,8 +254,8 @@ export class ConsoleHistory implements IConsoleHistory {
     editor: CodeEditor.IEditor,
     location: CodeEditor.EdgeLocation
   ): void {
-    let model = editor.model;
-    let source = model.value.text;
+    const model = editor.model;
+    const source = model.value.text;
 
     if (location === 'top' || location === 'topLine') {
       void this.back(source).then(value => {
@@ -277,13 +279,13 @@ export class ConsoleHistory implements IConsoleHistory {
         if (this.isDisposed) {
           return;
         }
-        let text = value || this.placeholder;
+        const text = value || this.placeholder;
         if (model.value.text === text) {
           return;
         }
         this._setByHistory = true;
         model.value.text = text;
-        let pos = editor.getPositionAt(text.length);
+        const pos = editor.getPositionAt(text.length);
         if (pos) {
           editor.setCursorPosition(pos);
         }
@@ -295,7 +297,7 @@ export class ConsoleHistory implements IConsoleHistory {
    * Handle the current kernel changing.
    */
   private async _handleKernel(): Promise<void> {
-    let kernel = this.session.kernel;
+    const kernel = this.sessionContext.session?.kernel;
     if (!kernel) {
       this._history.length = 0;
       return;
@@ -352,7 +354,7 @@ export namespace ConsoleHistory {
     /**
      * The client session used by the foreign handler.
      */
-    session: IClientSession;
+    sessionContext: ISessionContext;
   }
 }
 
@@ -360,7 +362,7 @@ export namespace ConsoleHistory {
  * A namespace for private data.
  */
 namespace Private {
-  export const initialRequest: KernelMessage.IHistoryRequest = {
+  export const initialRequest: KernelMessage.IHistoryRequestMsg['content'] = {
     output: false,
     raw: true,
     hist_access_type: 'tail',

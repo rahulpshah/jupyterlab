@@ -3,13 +3,13 @@
 
 import { simulate } from 'simulate-event';
 
-import { ServiceManager } from '@jupyterlab/services';
+import { ServiceManager, Session } from '@jupyterlab/services';
 
-import { ClientSession } from '@jupyterlab/apputils';
+import { SessionContext } from '@jupyterlab/apputils';
 
-import { PromiseDelegate, UUID } from '@phosphor/coreutils';
+import { PromiseDelegate, UUID } from '@lumino/coreutils';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 import {
   TextModelFactory,
   DocumentRegistry,
@@ -22,14 +22,20 @@ export { NBTestUtils } from './notebook-utils';
 
 export { defaultRenderMime } from './rendermime';
 
+export { JupyterServer } from './start_jupyter_server';
+
+const jestRetries = require('jest-retries');
+
+export const flakyIt: jest.It = jestRetries;
+
 /**
  * Test a single emission from a signal.
  *
  * @param signal - The signal we are listening to.
  * @param find - An optional function to determine which emission to test,
  * defaulting to the first emission.
- * @param test - An optional function which contains the tests for the emission.
- * @param value - An optional value that the promise resolves to if it is
+ * @param test - An optional function which contains the tests for the emission, and should throw an error if the tests fail.
+ * @param value - An optional value that the promise resolves to if the test is
  * successful.
  *
  * @returns a promise that rejects if the function throws an error (e.g., if an
@@ -48,18 +54,18 @@ export { defaultRenderMime } from './rendermime';
  * The reason this function is asynchronous is so that the thing causing the
  * signal emission (such as a websocket message) can be asynchronous.
  */
-export function testEmission<T, U, V>(
+export async function testEmission<T, U, V>(
   signal: ISignal<T, U>,
   options: {
     find?: (a: T, b: U) => boolean;
     test?: (a: T, b: U) => void;
     value?: V;
-  }
-): Promise<V> {
-  const done = new PromiseDelegate<V>();
+  } = {}
+): Promise<V | undefined> {
+  const done = new PromiseDelegate<V | undefined>();
   const object = {};
   signal.connect((sender: T, args: U) => {
-    if (!options.find || options.find(sender, args)) {
+    if (options.find?.(sender, args) ?? true) {
       try {
         Signal.disconnectReceiver(object);
         if (options.test) {
@@ -68,10 +74,39 @@ export function testEmission<T, U, V>(
       } catch (e) {
         done.reject(e);
       }
-      done.resolve(options.value || undefined);
+      done.resolve(options.value ?? undefined);
     }
   }, object);
   return done.promise;
+}
+
+/**
+ * Expect a failure on a promise with the given message.
+ */
+export async function expectFailure(
+  promise: Promise<any>,
+  message?: string
+): Promise<void> {
+  let called = false;
+  try {
+    await promise;
+    called = true;
+  } catch (err) {
+    if (message && err.message.indexOf(message) === -1) {
+      throw Error(`Error "${message}" not in: "${err.message}"`);
+    }
+  }
+  if (called) {
+    throw Error(`Failure was not triggered, message was: ${message}`);
+  }
+}
+
+/**
+ * Do something in the future ensuring total ordering with respect to promises.
+ */
+export async function doLater(cb: () => void): Promise<void> {
+  await Promise.resolve(void 0);
+  cb();
 }
 
 /**
@@ -124,12 +159,22 @@ export function signalToPromise<T, U>(signal: ISignal<T, U>): Promise<[T, U]> {
 /**
  * Test to see if a promise is fulfilled.
  *
+ * @param delay - optional delay in milliseconds before checking
  * @returns true if the promise is fulfilled (either resolved or rejected), and
  * false if the promise is still pending.
  */
-export async function isFulfilled<T>(p: PromiseLike<T>): Promise<boolean> {
-  let x = Object.create(null);
-  let result = await Promise.race([p, x]).catch(() => false);
+export async function isFulfilled<T>(
+  p: PromiseLike<T>,
+  delay = 0
+): Promise<boolean> {
+  const x = Object.create(null);
+  let race: any;
+  if (delay > 0) {
+    race = sleep(delay, x);
+  } else {
+    race = x;
+  }
+  const result = await Promise.race([p, race]).catch(() => false);
   return result !== x;
 }
 
@@ -158,59 +203,106 @@ export function sleep<T>(milliseconds: number = 0, value?: T): Promise<T> {
 /**
  * Create a client session object.
  */
-export async function createClientSession(
-  options: Partial<ClientSession.IOptions> = {}
-): Promise<ClientSession> {
-  const manager = options.manager || Private.getManager().sessions;
+export async function createSessionContext(
+  options: Partial<SessionContext.IOptions> = {}
+): Promise<SessionContext> {
+  const manager = options.sessionManager ?? Private.getManager().sessions;
+  const specsManager = options.specsManager ?? Private.getManager().kernelspecs;
 
-  await manager.ready;
-  return new ClientSession({
-    manager,
-    path: options.path || UUID.uuid4(),
+  await Promise.all([manager.ready, specsManager.ready]);
+  return new SessionContext({
+    sessionManager: manager,
+    specsManager,
+    path: options.path ?? UUID.uuid4(),
     name: options.name,
     type: options.type,
-    kernelPreference: options.kernelPreference || {
+    kernelPreference: options.kernelPreference ?? {
       shouldStart: true,
       canStart: true,
-      name: manager.specs.default
+      name: specsManager.specs?.default
     }
   });
+}
+
+/**
+ * Create a session and return a session connection.
+ */
+export async function createSession(
+  options: Session.ISessionOptions
+): Promise<Session.ISessionConnection> {
+  const manager = Private.getManager().sessions;
+  await manager.ready;
+  return manager.startNew(options);
 }
 
 /**
  * Create a context for a file.
  */
 export function createFileContext(
-  path?: string,
-  manager?: ServiceManager.IManager
+  path: string = UUID.uuid4() + '.txt',
+  manager: ServiceManager.IManager = Private.getManager()
 ): Context<DocumentRegistry.IModel> {
   const factory = Private.textFactory;
-
-  manager = manager || Private.getManager();
-  path = path || UUID.uuid4() + '.txt';
-
   return new Context({ manager, factory, path });
 }
 
-/**
- * Create a context for a notebook.
- */
-export async function createNotebookContext(
-  path?: string,
-  manager?: ServiceManager.IManager
-): Promise<Context<INotebookModel>> {
-  const factory = Private.notebookFactory;
-
-  manager = manager || Private.getManager();
-  path = path || UUID.uuid4() + '.ipynb';
-  await manager.ready;
+export async function createFileContextWithKernel(
+  path: string = UUID.uuid4() + '.txt',
+  manager: ServiceManager.IManager = Private.getManager()
+) {
+  const factory = Private.textFactory;
+  const specsManager = manager.kernelspecs;
+  await specsManager.ready;
 
   return new Context({
     manager,
     factory,
     path,
-    kernelPreference: { name: manager.specs.default }
+    kernelPreference: {
+      shouldStart: true,
+      canStart: true,
+      name: specsManager.specs?.default
+    }
   });
+}
+
+/**
+ * Create and initialize context for a notebook.
+ */
+export async function initNotebookContext(
+  options: {
+    path?: string;
+    manager?: ServiceManager.IManager;
+    startKernel?: boolean;
+  } = {}
+): Promise<Context<INotebookModel>> {
+  const factory = Private.notebookFactory;
+
+  const manager = options.manager || Private.getManager();
+  const path = options.path || UUID.uuid4() + '.ipynb';
+  const startKernel =
+    options.startKernel === undefined ? false : options.startKernel;
+  await manager.ready;
+
+  const context = new Context({
+    manager,
+    factory,
+    path,
+    kernelPreference: {
+      shouldStart: startKernel,
+      canStart: startKernel,
+      shutdownOnDispose: true,
+      name: manager.kernelspecs.specs?.default
+    }
+  });
+  await context.initialize(true);
+
+  if (startKernel) {
+    await context.sessionContext.initialize();
+    await context.sessionContext.session?.kernel?.info;
+  }
+
+  return context;
 }
 
 /**

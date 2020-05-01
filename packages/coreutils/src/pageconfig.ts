@@ -1,34 +1,22 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { JSONExt } from '@phosphor/coreutils';
+import { JSONExt } from '@lumino/coreutils';
 
 import minimist from 'minimist';
-
-import { PathExt } from './path';
 
 import { URLExt } from './url';
 
 /**
  * Declare stubs for the node variables.
  */
-declare var process: any;
-declare var require: any;
+declare let process: any;
+declare let require: any;
 
 /**
- * The namespace for Page Config functions.
+ * The namespace for `PageConfig` functions.
  */
 export namespace PageConfig {
-  /**
-   * The tree URL construction options.
-   */
-  export interface ITreeOptions {
-    /**
-     * If provided, the tree URL will include the current workspace, if any.
-     */
-    workspace?: string;
-  }
-
   /**
    * Get global configuration data for the Jupyter application.
    *
@@ -49,7 +37,7 @@ export namespace PageConfig {
    */
   export function getOption(name: string): string {
     if (configData) {
-      return configData[name] || Private.getBodyData(name);
+      return configData[name] || getBodyData(name);
     }
     configData = Object.create(null);
     let found = false;
@@ -77,10 +65,9 @@ export namespace PageConfig {
           fullPath = path.resolve(process.env['JUPYTER_CONFIG_DATA']);
         }
         if (fullPath) {
-          /* tslint:disable */
           // Force Webpack to ignore this require.
+          // eslint-disable-next-line
           configData = eval('require')(fullPath) as { [key: string]: string };
-          /* tslint:enable */
         }
       } catch (e) {
         console.error(e);
@@ -90,14 +77,14 @@ export namespace PageConfig {
     if (!JSONExt.isObject(configData)) {
       configData = Object.create(null);
     } else {
-      for (let key in configData) {
-        // Quote characters are escaped, unescape them.
-        configData[key] = String(configData[key])
-          .split('&#39;')
-          .join('"');
+      for (const key in configData) {
+        // PageConfig expects strings
+        if (typeof configData[key] !== 'string') {
+          configData[key] = JSON.stringify(configData[key]);
+        }
       }
     }
-    return configData![name] || Private.getBodyData(name);
+    return configData![name] || getBodyData(name);
   }
 
   /**
@@ -124,19 +111,25 @@ export namespace PageConfig {
 
   /**
    * Get the tree url for a JupyterLab application.
-   *
-   * @param options - The tree URL construction options.
    */
-  export function getTreeUrl(options: ITreeOptions = {}): string {
-    const base = getBaseUrl();
-    const tree = getOption('treeUrl');
-    const defaultWorkspace = getOption('defaultWorkspace');
-    const workspaces = getOption('workspacesUrl');
-    const workspace = options.workspace || '';
+  export function getTreeUrl(): string {
+    return URLExt.join(getBaseUrl(), getOption('treeUrl'));
+  }
 
-    return workspace && workspace !== defaultWorkspace
-      ? URLExt.join(base, workspaces, PathExt.basename(workspace), 'tree')
-      : URLExt.join(base, tree);
+  /**
+   * Get the base url for sharing links (usually baseUrl)
+   */
+  export function getShareUrl(): string {
+    return URLExt.normalize(getOption('shareUrl') || getBaseUrl());
+  }
+
+  /**
+   * Get the tree url for shareable links.
+   * Usually the same as treeUrl,
+   * but overrideable e.g. when sharing with JupyterHub.
+   */
+  export function getTreeShareUrl(): string {
+    return URLExt.normalize(URLExt.join(getShareUrl(), getOption('treeUrl')));
   }
 
   /**
@@ -179,7 +172,7 @@ export namespace PageConfig {
    * Get the authorization token for a Jupyter application.
    */
   export function getToken(): string {
-    return getOption('token') || Private.getBodyData('jupyterApiToken');
+    return getOption('token') || getBodyData('jupyterApiToken');
   }
 
   /**
@@ -197,25 +190,75 @@ export namespace PageConfig {
    * Private page config data for the Jupyter application.
    */
   let configData: { [key: string]: string } | null = null;
-}
 
-/**
- * A namespace for module private data.
- */
-namespace Private {
   /**
    * Get a url-encoded item from `body.data` and decode it
    * We should never have any encoded URLs anywhere else in code
    * until we are building an actual request.
    */
-  export function getBodyData(key: string): string {
+  function getBodyData(key: string): string {
     if (typeof document === 'undefined' || !document.body) {
       return '';
     }
-    let val = document.body.dataset[key];
+    const val = document.body.dataset[key];
     if (typeof val === 'undefined') {
       return '';
     }
     return decodeURIComponent(val);
+  }
+
+  /**
+   * The namespace for page config `Extension` functions.
+   */
+  export namespace Extension {
+    /**
+     * Populate an array from page config.
+     *
+     * @param key - The page config key (e.g., `deferredExtensions`).
+     *
+     * #### Notes
+     * This is intended for `deferredExtensions` and `disabledExtensions`.
+     */
+    function populate(key: string): { raw: string; rule: RegExp }[] {
+      try {
+        const raw = getOption(key);
+        if (raw) {
+          return JSON.parse(raw).map((pattern: string) => {
+            return { raw: pattern, rule: new RegExp(pattern) };
+          });
+        }
+      } catch (error) {
+        console.warn(`Unable to parse ${key}.`, error);
+      }
+      return [];
+    }
+
+    /**
+     * The collection of deferred extensions in page config.
+     */
+    export const deferred = populate('deferredExtensions');
+
+    /**
+     * The collection of disabled extensions in page config.
+     */
+    export const disabled = populate('disabledExtensions');
+
+    /**
+     * Returns whether a plugin is deferred.
+     *
+     * @param id - The plugin ID.
+     */
+    export function isDeferred(id: string): boolean {
+      return deferred.some(val => val.raw === id || val.rule.test(id));
+    }
+
+    /**
+     * Returns whether a plugin is disabled.
+     *
+     * @param id - The plugin ID.
+     */
+    export function isDisabled(id: string): boolean {
+      return disabled.some(val => val.raw === id || val.rule.test(id));
+    }
   }
 }

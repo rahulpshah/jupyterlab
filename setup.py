@@ -21,11 +21,9 @@ from setuptools.command.develop import develop
 
 NAME = 'jupyterlab'
 DESCRIPTION = 'The JupyterLab notebook server extension.'
-LONG_DESCRIPTION = """
-An extensible, comprehensive Jupyter web application.
-Development happens on https://github.com/jupyter/jupyterlab, with chat on
-https://gitter.im/jupyterlab/jupyterlab.
-"""
+
+with open(pjoin(HERE, 'README.md')) as fid:
+    LONG_DESCRIPTION = fid.read()
 
 ensure_python(['>=3.5'])
 
@@ -39,9 +37,14 @@ data_files_spec = [
 
 package_data_spec = dict()
 package_data_spec[NAME] = [
-    'staging/*', 'staging/templates/*', 'static/**', 'tests/mock_packages/**',
-    'themes/**', 'schemas/**', '*.js'
+    'staging/*', 'staging/templates/*', 'staging/.yarnrc',
+    'static/**', 'tests/mock_packages/**', 'themes/**', 'schemas/**', '*.js'
 ]
+
+
+def exclude(filename):
+    """Exclude JavaScript map files"""
+    return filename.endswith('.js.map')
 
 staging = pjoin(HERE, NAME, 'staging')
 npm = ['node', pjoin(staging, 'yarn.js')]
@@ -54,7 +57,7 @@ def check_assets():
     # Representative files that should exist after a successful build
     targets = [
         'static/package.json',
-        'schemas/@jupyterlab/shortcuts-extension/plugin.json',
+        'schemas/@jupyterlab/shortcuts-extension/shortcuts.json',
         'themes/@jupyterlab/theme-light-extension/index.css'
     ]
 
@@ -76,7 +79,7 @@ def check_assets():
 
 
 cmdclass = create_cmdclass('jsdeps', data_files_spec=data_files_spec,
-                           package_data_spec=package_data_spec)
+                           package_data_spec=package_data_spec, exclude=exclude)
 cmdclass['jsdeps'] = combine_commands(
     install_npm(build_cmd='build:prod', path=staging, source_dir=staging,
                 build_dir=pjoin(HERE, NAME, 'static'), npm=npm),
@@ -108,6 +111,7 @@ setup_args = dict(
     name=NAME,
     description=DESCRIPTION,
     long_description=LONG_DESCRIPTION,
+    long_description_content_type='text/markdown',
     version=VERSION,
     packages=find_packages(),
     cmdclass=cmdclass,
@@ -118,7 +122,7 @@ setup_args = dict(
     platforms='Linux, Mac OS X, Windows',
     keywords=['ipython', 'jupyter', 'Web'],
     classifiers=[
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Developers',
         'Intended Audience :: System Administrators',
         'Intended Audience :: Science/Research',
@@ -127,30 +131,37 @@ setup_args = dict(
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
     ],
 )
 
 
 setup_args['install_requires'] = [
     'notebook>=4.3.1',
-    'tornado<6',
-    'jupyterlab_server>=0.3.0,<0.4.0'
+    'tornado!=6.0.0, !=6.0.1, !=6.0.2',
+    'jupyterlab_server>=1.1.0, <2.0',
+    'jinja2>=2.10'
 ]
 
 setup_args['extras_require'] = {
     'test': [
         'pytest',
         'pytest-check-links',
-        'requests'
+        'requests',
+        'wheel',
+        'virtualenv'
     ],
     'docs': [
-        'sphinx',
+        'jsx-lexer',
         'recommonmark',
-        'sphinx_rtd_theme'
+        'sphinx',
+        'sphinx_rtd_theme',
+        'sphinx-copybutton'
     ],
 }
 
 
+setup_args['package_data'] = package_data_spec
 setup_args['include_package_data'] = True
 setup_args['python_requires'] = '>=3.5'
 
@@ -160,7 +171,6 @@ setup_args['entry_points'] = {
     'console_scripts': [
         'jupyter-lab = jupyterlab.labapp:main',
         'jupyter-labextension = jupyterlab.labextensions:main',
-        'jupyter-labhub = jupyterlab.labhubapp:main',
         'jlpm = jupyterlab.jlpmapp:main',
     ]
 }

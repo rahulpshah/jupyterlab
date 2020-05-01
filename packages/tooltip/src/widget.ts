@@ -1,13 +1,13 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { JSONObject } from '@phosphor/coreutils';
+import { JSONObject } from '@lumino/coreutils';
 
-import { Message } from '@phosphor/messaging';
+import { Message } from '@lumino/messaging';
 
-import { PanelLayout } from '@phosphor/widgets';
+import { PanelLayout } from '@lumino/widgets';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import { CodeEditor } from '@jupyterlab/codeeditor';
 
@@ -15,7 +15,7 @@ import { HoverBox } from '@jupyterlab/apputils';
 
 import {
   IRenderMime,
-  RenderMimeRegistry,
+  IRenderMimeRegistry,
   MimeModel
 } from '@jupyterlab/rendermime';
 
@@ -232,7 +232,7 @@ export class Tooltip extends Widget {
 
   private _content: IRenderMime.IRenderer | null = null;
   private _editor: CodeEditor.IEditor;
-  private _rendermime: RenderMimeRegistry;
+  private _rendermime: IRenderMimeRegistry;
 }
 
 /**
@@ -261,6 +261,6 @@ export namespace Tooltip {
     /**
      * The rendermime instance used by the tooltip model.
      */
-    rendermime: RenderMimeRegistry;
+    rendermime: IRenderMimeRegistry;
   }
 }

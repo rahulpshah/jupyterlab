@@ -10,7 +10,16 @@
       "path": "../application"
     },
     {
+      "path": "../coreutils"
+    },
+    {
       "path": "../running"
+    },
+    {
+      "path": "../services"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

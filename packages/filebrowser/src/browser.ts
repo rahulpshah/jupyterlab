@@ -3,13 +3,15 @@
 
 import { showErrorMessage, Toolbar, ToolbarButton } from '@jupyterlab/apputils';
 
-import { DocumentManager } from '@jupyterlab/docmanager';
+import { IDocumentManager } from '@jupyterlab/docmanager';
 
 import { Contents, ServerConnection } from '@jupyterlab/services';
 
-import { IIterator } from '@phosphor/algorithm';
+import { newFolderIcon, refreshIcon } from '@jupyterlab/ui-components';
 
-import { PanelLayout, Widget } from '@phosphor/widgets';
+import { IIterator } from '@lumino/algorithm';
+
+import { PanelLayout, Widget } from '@lumino/widgets';
 
 import { BreadCrumbs } from './crumbs';
 
@@ -64,20 +66,18 @@ export class FileBrowser extends Widget {
     this._manager = model.manager;
     this._crumbs = new BreadCrumbs({ model });
     this.toolbar = new Toolbar<Widget>();
-
     this._directoryPending = false;
-    let newFolder = new ToolbarButton({
-      iconClassName: 'jp-NewFolderIcon',
+
+    const newFolder = new ToolbarButton({
+      icon: newFolderIcon,
       onClick: () => {
         this.createNewDirectory();
       },
       tooltip: 'New Folder'
     });
-
-    let uploader = new Uploader({ model });
-
-    let refresher = new ToolbarButton({
-      iconClassName: 'jp-RefreshIcon',
+    const uploader = new Uploader({ model });
+    const refresher = new ToolbarButton({
+      icon: refreshIcon,
       onClick: () => {
         void model.refresh();
       },
@@ -94,13 +94,16 @@ export class FileBrowser extends Widget {
     this.toolbar.addClass(TOOLBAR_CLASS);
     this._listing.addClass(LISTING_CLASS);
 
-    let layout = new PanelLayout();
+    const layout = new PanelLayout();
+
     layout.addWidget(this.toolbar);
     layout.addWidget(this._crumbs);
     layout.addWidget(this._listing);
-
     this.layout = layout;
-    void model.restore(this.id);
+
+    if (options.restore !== false) {
+      void model.restore(this.id);
+    }
   }
 
   /**
@@ -120,6 +123,19 @@ export class FileBrowser extends Widget {
    */
   selectedItems(): IIterator<Contents.IModel> {
     return this._listing.selectedItems();
+  }
+
+  /**
+   * Select an item by name.
+   *
+   * @param name - The name of the item to select.
+   */
+  async selectItemByName(name: string) {
+    await this._listing.selectItemByName(name);
+  }
+
+  clearSelectedItems() {
+    this._listing.clearSelectedItems();
   }
 
   /**
@@ -244,37 +260,32 @@ export class FileBrowser extends Widget {
    * Handle a connection lost signal from the model.
    */
   private _onConnectionFailure(sender: FileBrowserModel, args: Error): void {
-    if (this._showingError) {
-      return;
+    if (
+      args instanceof ServerConnection.ResponseError &&
+      args.response.status === 404
+    ) {
+      const title = 'Directory not found';
+      args.message = `Directory not found: "${this.model.path}"`;
+      void showErrorMessage(title, args);
     }
-    this._showingError = true;
+  }
 
-    let title = 'Server Connection Error';
-    let networkMsg =
-      'A connection to the Jupyter server could not be established.\n' +
-      'JupyterLab will continue trying to reconnect.\n' +
-      'Check your network connection or Jupyter server configuration.\n';
+  /**
+   * Whether to show active file in file browser
+   */
+  get navigateToCurrentDirectory(): boolean {
+    return this._navigateToCurrentDirectory;
+  }
 
-    // Check for a fetch error.
-    if (args instanceof ServerConnection.NetworkError) {
-      args.message = networkMsg;
-    } else if (args instanceof ServerConnection.ResponseError) {
-      if (args.response.status === 404) {
-        title = 'Directory not found';
-        args.message = `Directory not found: "${this.model.path}"`;
-      }
-    }
-
-    void showErrorMessage(title, args).then(() => {
-      this._showingError = false;
-    });
+  set navigateToCurrentDirectory(value: boolean) {
+    this._navigateToCurrentDirectory = value;
   }
 
   private _crumbs: BreadCrumbs;
   private _listing: DirListing;
-  private _manager: DocumentManager;
-  private _showingError = false;
+  private _manager: IDocumentManager;
   private _directoryPending: boolean;
+  private _navigateToCurrentDirectory: boolean;
 }
 
 /**
@@ -301,5 +312,15 @@ export namespace FileBrowser {
      * The default is a shared instance of `DirListing.Renderer`.
      */
     renderer?: DirListing.IRenderer;
+
+    /**
+     * Whether a file browser automatically restores state when instantiated.
+     * The default is `true`.
+     *
+     * #### Notes
+     * The file browser model will need to be restored manually for the file
+     * browser to be able to save its state.
+     */
+    restore?: boolean;
   }
 }

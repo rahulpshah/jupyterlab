@@ -17,7 +17,7 @@ If you believe you’ve found a security vulnerability in JupyterLab or any
 Jupyter project, please report it to
 [security@ipython.org](mailto:security@ipython.org). If you prefer to encrypt your
 security reports, you can use [this PGP public
-key](https://jupyter-notebook.readthedocs.io/en/stable/_downloads/ipython_security.asc).
+key](https://raw.githubusercontent.com/jupyter/notebook/master/docs/source/ipython_security.asc).
 
 ## General Guidelines for Contributing
 
@@ -44,10 +44,18 @@ a keyboard shortcut or automatically on save.
 ## Submitting a Pull Request Contribution
 
 Generally, an issue should be opened describing a piece of proposed work and the
-issues it solves before a pull request is opened. This lets community members
-participate in the design discussion, makes others aware of work being done, and
-sets the stage for a fruitful community interaction. A pull request should
-reference the issue it is addressing.
+issues it solves before a pull request is opened.
+
+### Issue Management
+
+Opening an issue lets community members participate in the design discussion,
+makes others aware of work being done, and sets the stage for a fruitful community
+interaction. A pull request should reference the issue it is addressing. Once the
+pull request is merged, the issue related to it will also be closed. If there is
+additional discussion around implemementation the issue may be re-opened. Once 30 days
+have passed with no additional discussion, the [lock bot](https://github.com/apps/lock) will lock the issue. If
+additional discussion is desired, or if the pull request doesn't fully address the
+locked issue, please open a new issue referencing the locked issue.
 
 ### Tag Issues with Labels
 
@@ -61,7 +69,8 @@ You can launch a binder with the latest JupyterLab master to test something (thi
 
 ### Installing Node.js and jlpm
 
-Building JupyterLab from its GitHub source code requires Node.js.
+Building JupyterLab from its GitHub source code requires Node.js. The development version requires Node.js version 10+, as defined in the `engines` specification in
+[`dev_mode/package.json`](dev_mode/package.json).
 
 If you use `conda`, you can get it with:
 
@@ -76,6 +85,12 @@ brew install node
 ```
 
 You can also use the installer from the [Node.js](https://nodejs.org) website.
+
+To check which version of Node.js is installed:
+
+```bash
+node -v
+```
 
 ## Installing JupyterLab
 
@@ -118,10 +133,14 @@ Notes:
 
 - A few of the scripts will run "python". If your target python is called something else (such as "python3") then parts of the build will fail. You may wish to build in a conda environment, or make an alias.
 
+- Some of the packages used in the development environment require Python 3.0 or higher. If you encounter an `ImportError` during the installation, make sure Python 3.0+ is installed. Also, try using the Python 3.0+ version of `pip` or `pip3 install -e .` command to install JupyterLab from the forked repository.
+
 - The `jlpm` command is a JupyterLab-provided, locked version of the [yarn](https://yarnpkg.com/en/) package manager. If you have `yarn` installed
   already, you can use the `yarn` command when developing, and it will use the
   local version of `yarn` in `jupyterlab/yarn.js` when run in the repository or
   a built application directory.
+
+- If you decide to use the `jlpm` command and encounter the `jlpm: command not found` error, try adding the user-level `bin` directory to your `PATH` environment variable. You already installed `jlpm` along with JupyterLab in the previous command, but `jlpm` might not be accessible due to `PATH` environment variable related issues. If you are using a Unix derivative (FreeBSD, GNU / Linux, OS X), you can achieve this by using `export PATH="$HOME/.local/bin:$PATH"` command.
 
 - At times, it may be necessary to clean your local repo with the command `npm run clean:slate`. This will clean the repository, and re-install and
   rebuild.
@@ -216,6 +235,196 @@ directly. You can also use `jlpm test --testNamePattern=<regex>` to specify spec
 suite names, and `jlpm test --testPathPattern=<regex>` to specify specific test module names. In order to watch the code, add a `debugger` line in your code and run `jlpm watch`. This will start a node V8 debugger, which can be debugged
 in Chrome by browsing to `chrome://inspect/` and launching the remote session.
 
+## Performance Testing
+
+If you are making a change that might affect how long it takes to load JupyterLab in the browser,
+we recommend doing some performance testing using [Lighthouse](https://github.com/GoogleChrome/lighthouse).
+It let's you easily compute a number of metrics, like page load time, for the site.
+
+To use it, first build JupyterLab in dev mode:
+
+```bash
+jlpm run build:dev
+```
+
+Then, start JupyterLab using the dev build:
+
+```bash
+jupyter lab --dev --NotebookApp.token=''  --no-browser
+```
+
+Now run Lighthouse against this local server and show the results:
+
+```bash
+jlpm run lighthouse --view
+```
+
+![](./docs/source/images/lighthouse.png)
+
+### Using throttling
+
+Lighthouse recommends using the system level [`comcast`](https://github.com/tylertreat/comcast) tool to throttle your network connection
+and emulate different scenarios. To use it, first install that tool using `go`:
+
+```bash
+go get github.com/tylertreat/comcast
+```
+
+Then, before you run Lighthouse, enable the throttling (this requires sudo):
+
+```bash
+jlpm run lighthouse:throttling:start
+```
+
+This enables the "WIFI (good)" preset of comcast, which should emulate
+loading JupyterLab over a local network.
+
+Then run the lighthouse tests:
+
+```bash
+jlpm run lighthouse [...]
+```
+
+Then disable the throttling after you are done:
+
+```bash
+jlpm run lighthouse:throttling:stop
+```
+
+### Comparing results
+
+Performance results are usually only useful in comparison to other results.
+For that reason, we have included a comparison script that can take two
+lighthouse results and show the changes between them.
+
+Let's say we want to compare the results of the production build of JupyterLab with the normal build. The production build minifies all the JavaScript, so should load a bit faster.
+
+First, we build JupyterLab normally, start it up, profile it and save the results:
+
+```bash
+jlpm build:dev
+jupyter lab --dev --NotebookApp.token='' --no-browser
+
+# in new window
+jlpm run lighthouse --output json --output-path normal.json
+```
+
+Then rebuild with the production build and retest:
+
+```bash
+jlpm run build:dev:prod
+jupyter lab --dev --NotebookApp.token='' --no-browser
+
+# in new window
+jlpm run lighthouse --output json --output-path prod.json
+```
+
+Now we can use compare the two outputs:
+
+```bash
+jlpm run lighthouse:compare normal.json prod.json
+```
+
+This gives us a report of the relative differences between the audits in the two reports:
+
+> `normal.json` -> `prod.json`
+>
+> **First Contentful Paint**
+>
+> - -62% Δ
+> - 1.9 s -> 0.7 s
+> - First Contentful Paint marks the time at which the first text or image is painted. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/first-contentful-paint).
+>
+> **First Meaningful Paint**
+>
+> - -50% Δ
+> - 2.5 s -> 1.3 s
+> - First Meaningful Paint measures when the primary content of a page is visible. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/first-meaningful-paint).
+>
+> **Speed Index**
+>
+> - -48% Δ
+> - 2.6 s -> 1.3 s
+> - Speed Index shows how quickly the contents of a page are visibly populated. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/speed-index).
+>
+> **Estimated Input Latency**
+>
+> - 0% Δ
+> - 20 ms -> 20 ms
+> - Estimated Input Latency is an estimate of how long your app takes to respond to user input, in milliseconds, during the busiest 5s window of page load. If your latency is higher than 50 ms, users may perceive your app as laggy. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/estimated-input-latency).
+>
+> **Max Potential First Input Delay**
+>
+> - 9% Δ
+> - 200 ms -> 210 ms
+> - The maximum potential First Input Delay that your users could experience is the duration, in milliseconds, of the longest task. [Learn more](https://developers.google.com/web/updates/2018/05/first-input-delay).
+>
+> **First CPU Idle**
+>
+> - -50% Δ
+> - 2.5 s -> 1.3 s
+> - First CPU Idle marks the first time at which the page's main thread is quiet enough to handle input. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/first-interactive).
+>
+> **Time to Interactive**
+>
+> - -52% Δ
+> - 2.5 s -> 1.2 s
+> - Time to interactive is the amount of time it takes for the page to become fully interactive. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/consistently-interactive).
+>
+> **Avoid multiple page redirects**
+>
+> - -2% Δ
+> - Potential savings of 10 ms -> Potential savings of 10 ms
+> - Redirects introduce additional delays before the page can be loaded. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/redirects).
+>
+> **Minimize main-thread work**
+>
+> - -54% Δ
+> - 2.1 s -> 1.0 s
+> - Consider reducing the time spent parsing, compiling and executing JS. You may find delivering smaller JS payloads helps with this.
+>
+> **JavaScript execution time**
+>
+> - -49% Δ
+> - 1.1 s -> 0.6 s
+> - Consider reducing the time spent parsing, compiling, and executing JS. You may find delivering smaller JS payloads helps with this. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/bootup).
+>
+> **Preload key requests**
+>
+> - -100% Δ
+> - Potential savings of 240 ms ->
+> - Consider using <link rel=preload> to prioritize fetching resources that are currently requested later in page load. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/preload).
+>
+> **Uses efficient cache policy on static assets**
+>
+> - 0% Δ
+> - 1 resource found -> 1 resource found
+> - A long cache lifetime can speed up repeat visits to your page. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/cache-policy).
+>
+> **Avoid enormous network payloads**
+>
+> - -86% Δ
+> - Total size was 30,131 KB -> Total size was 4,294 KB
+> - Large network payloads cost users real money and are highly correlated with long load times. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/network-payloads).
+>
+> **Minify JavaScript**
+>
+> - -100% Δ
+> - Potential savings of 23,041 KB ->
+> - Minifying JavaScript files can reduce payload sizes and script parse time. [Learn more](https://developers.google.com/speed/docs/insights/MinifyResources).
+>
+> **Enable text compression**
+>
+> - -86% Δ
+> - Potential savings of 23,088 KB -> Potential savings of 3,112 KB
+> - Text-based resources should be served with compression (gzip, deflate or brotli) to minimize total network bytes. [Learn more](https://developers.google.com/web/tools/lighthouse/audits/text-compression).
+>
+> **Avoid an excessive DOM size**
+>
+> - 0% Δ
+> - 1,268 elements -> 1,268 elements
+> - Browser engineers recommend pages contain fewer than ~1,500 DOM elements. The sweet spot is a tree depth < 32 elements and fewer than 60 children/parent element. A large DOM can increase memory usage, cause longer [style calculations](https://developers.google.com/web/fundamentals/performance/rendering/reduce-the-scope-and-complexity-of-style-calculations), and produce costly [layout reflows](https://developers.google.com/speed/articles/reflow). [Learn more](https://developers.google.com/web/tools/lighthouse/audits/dom-size).
+
 ### Build and run the stand-alone examples
 
 To install and build the examples in the `examples` directory:
@@ -297,7 +506,7 @@ Alternatively, you can install the documentation dependencies in an existing env
 conda env update -n <ENVIRONMENT> -f docs/environment.yml
 ```
 
-The Developer Documentation includes a [guide](http://jupyterlab.readthedocs.io/en/latest/developer/documentation.html) to writing documentation including writing style, naming conventions, keyboard shortcuts, and screenshots.
+The Developer Documentation includes a [guide](https://jupyterlab.readthedocs.io/en/latest/developer/contributing.html) to writing documentation including writing style, naming conventions, keyboard shortcuts, and screenshots.
 
 To test the docs run:
 
@@ -363,13 +572,16 @@ a package by importing from it in the TypeScript file, and then running:
 `jlpm run integrity` from the repo root.
 
 We also have scripts for creating and removing packages in `packages/`,
-`jlpm run create:package` and `jlpm run remove:package`.
+`jlpm run create:package` and `jlpm run remove:package`. When creating a package,
+if it is meant to be included in the core bundle, add the `jupyterlab: { coreDependency: true }`
+metadata to the `package.json`. Packages with `extension` or `mimeExtension` metadata
+are considered to be a core dependency unless they are explicitly marked otherwise.
 
 ## Testing Changes to External Packages
 
 ### Linking/Unlinking Packages to JupyterLab
 
-If you want to make changes to one of JupyterLab's external packages (for example, [Phosphor](https://github.com/phosphorjs/phosphor)) and test them out against your copy of JupyterLab, you can easily do so using the `link` command:
+If you want to make changes to one of JupyterLab's external packages (for example, [Lumino](https://github.com/jupyterlab/lumino)) and test them out against your copy of JupyterLab, you can easily do so using the `link` command:
 
 1.  Make your changes and then build the external package
 2.  Register a link to the modified external package
@@ -392,7 +604,7 @@ You can then (re)build JupyterLab and everything should be back to default.
 
 If you're working on an external project with more than one package, you'll probably have to link in your copies of every package in the project, including those you made no changes to. Failing to do so may cause issues relating to duplication of shared state.
 
-Specifically, when working with Phosphor, you'll probably have to link your copy of the `"@phosphor/messaging"` package (in addition to whatever packages you actually made changes to). This is due to potential duplication of objects contained in the `MessageLoop` namespace provided by the `messaging` package.
+Specifically, when working with Lumino, you'll probably have to link your copy of the `"@lumino/messaging"` package (in addition to whatever packages you actually made changes to). This is due to potential duplication of objects contained in the `MessageLoop` namespace provided by the `messaging` package.
 
 ## Notes
 

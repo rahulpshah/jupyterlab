@@ -3,13 +3,17 @@
 
 import { DocumentRegistry } from '@jupyterlab/docregistry';
 
-import { ArrayExt, find, IIterator, iter, toArray } from '@phosphor/algorithm';
+import { classes, DockPanelSvg, LabIcon } from '@jupyterlab/ui-components';
 
-import { PromiseDelegate, Token } from '@phosphor/coreutils';
+import { ArrayExt, find, IIterator, iter, toArray } from '@lumino/algorithm';
 
-import { Message, MessageLoop, IMessageHandler } from '@phosphor/messaging';
+import { PromiseDelegate, Token } from '@lumino/coreutils';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { Message, MessageLoop, IMessageHandler } from '@lumino/messaging';
+
+import { Debouncer } from '@lumino/polling';
+
+import { ISignal, Signal } from '@lumino/signaling';
 
 import {
   BoxLayout,
@@ -23,7 +27,7 @@ import {
   TabBar,
   Title,
   Widget
-} from '@phosphor/widgets';
+} from '@lumino/widgets';
 
 import { JupyterFrontEnd } from './frontend';
 
@@ -52,16 +56,11 @@ const ACTIVE_CLASS = 'jp-mod-active';
  */
 const DEFAULT_RANK = 500;
 
-/**
- * The data attribute added to the document body indicating shell's mode.
- */
-const MODE_ATTRIBUTE = 'data-shell-mode';
-
 const ACTIVITY_CLASS = 'jp-Activity';
 
 /* tslint:disable */
 /**
- * The layout restorer token.
+ * The JupyterLab application shell token.
  */
 export const ILabShell = new Token<ILabShell>(
   '@jupyterlab/application:ILabShell'
@@ -69,7 +68,7 @@ export const ILabShell = new Token<ILabShell>(
 /* tslint:enable */
 
 /**
- * The JupyterLab application shell.
+ * The JupyterLab application shell interface.
  */
 export interface ILabShell extends LabShell {}
 
@@ -176,26 +175,24 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
     this.addClass(APPLICATION_SHELL_CLASS);
     this.id = 'main';
 
-    let bottomPanel = (this._bottomPanel = new BoxPanel());
-    let topPanel = (this._topPanel = new Panel());
-    let hboxPanel = new BoxPanel();
-    let dockPanel = (this._dockPanel = new DockPanel());
-    let headerPanel = (this._headerPanel = new Panel());
+    const headerPanel = (this._headerPanel = new BoxPanel());
+    const topHandler = (this._topHandler = new Private.PanelHandler());
+    const bottomPanel = (this._bottomPanel = new BoxPanel());
+    const hboxPanel = new BoxPanel();
+    const dockPanel = (this._dockPanel = new DockPanelSvg());
     MessageLoop.installMessageHook(dockPanel, this._dockChildHook);
 
-    let hsplitPanel = new SplitPanel();
-    let leftHandler = (this._leftHandler = new Private.SideBarHandler('left'));
-    let rightHandler = (this._rightHandler = new Private.SideBarHandler(
-      'right'
-    ));
-    let rootLayout = new BoxLayout();
+    const hsplitPanel = new SplitPanel();
+    const leftHandler = (this._leftHandler = new Private.SideBarHandler());
+    const rightHandler = (this._rightHandler = new Private.SideBarHandler());
+    const rootLayout = new BoxLayout();
 
+    headerPanel.id = 'jp-header-panel';
+    topHandler.panel.id = 'jp-top-panel';
     bottomPanel.id = 'jp-bottom-panel';
-    topPanel.id = 'jp-top-panel';
     hboxPanel.id = 'jp-main-content-panel';
     dockPanel.id = 'jp-main-dock-panel';
     hsplitPanel.id = 'jp-main-split-panel';
-    headerPanel.id = 'jp-header-panel';
 
     leftHandler.sideBar.addClass(SIDEBAR_CLASS);
     leftHandler.sideBar.addClass('jp-mod-left');
@@ -205,13 +202,14 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
     rightHandler.sideBar.addClass('jp-mod-right');
     rightHandler.stackedPanel.id = 'jp-right-stack';
 
-    bottomPanel.direction = 'bottom-to-top';
     hboxPanel.spacing = 0;
     dockPanel.spacing = 5;
     hsplitPanel.spacing = 1;
 
+    headerPanel.direction = 'top-to-bottom';
     hboxPanel.direction = 'left-to-right';
     hsplitPanel.orientation = 'horizontal';
+    bottomPanel.direction = 'bottom-to-top';
 
     SplitPanel.setStretch(leftHandler.stackedPanel, 0);
     SplitPanel.setStretch(dockPanel, 1);
@@ -237,12 +235,12 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
     hsplitPanel.setRelativeSizes([1, 2.5, 1]);
 
     BoxLayout.setStretch(headerPanel, 0);
-    BoxLayout.setStretch(topPanel, 0);
+    BoxLayout.setStretch(topHandler.panel, 0);
     BoxLayout.setStretch(hboxPanel, 1);
     BoxLayout.setStretch(bottomPanel, 0);
 
     rootLayout.addWidget(headerPanel);
-    rootLayout.addWidget(topPanel);
+    rootLayout.addWidget(topHandler.panel);
     rootLayout.addWidget(hboxPanel);
     rootLayout.addWidget(bottomPanel);
 
@@ -359,8 +357,8 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
         dock.activateWidget(this.currentWidget);
       }
 
-      // Set the mode data attribute on the document body.
-      document.body.setAttribute(MODE_ATTRIBUTE, mode);
+      // Set the mode data attribute on the application shell node.
+      this.node.dataset.shellMode = mode;
       return;
     }
 
@@ -399,8 +397,8 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
       dock.activateWidget(applicationCurrentWidget);
     }
 
-    // Set the mode data attribute on the document body.
-    document.body.setAttribute(MODE_ATTRIBUTE, mode);
+    // Set the mode data attribute on the applications shell node.
+    this.node.dataset.shellMode = mode;
   }
 
   /**
@@ -437,12 +435,12 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
    * Activate the next Tab in the active TabBar.
    */
   activateNextTab(): void {
-    let current = this._currentTabBar();
+    const current = this._currentTabBar();
     if (!current) {
       return;
     }
 
-    let ci = current.currentIndex;
+    const ci = current.currentIndex;
     if (ci === -1) {
       return;
     }
@@ -456,7 +454,7 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
     }
 
     if (ci === current.titles.length - 1) {
-      let nextBar = this._adjacentBar('next');
+      const nextBar = this._adjacentBar('next');
       if (nextBar) {
         nextBar.currentIndex = 0;
         if (nextBar.currentTitle) {
@@ -470,12 +468,12 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
    * Activate the previous Tab in the active TabBar.
    */
   activatePreviousTab(): void {
-    let current = this._currentTabBar();
+    const current = this._currentTabBar();
     if (!current) {
       return;
     }
 
-    let ci = current.currentIndex;
+    const ci = current.currentIndex;
     if (ci === -1) {
       return;
     }
@@ -489,13 +487,37 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
     }
 
     if (ci === 0) {
-      let prevBar = this._adjacentBar('previous');
+      const prevBar = this._adjacentBar('previous');
       if (prevBar) {
-        let len = prevBar.titles.length;
+        const len = prevBar.titles.length;
         prevBar.currentIndex = len - 1;
         if (prevBar.currentTitle) {
           prevBar.currentTitle.owner.activate();
         }
+      }
+    }
+  }
+
+  /*
+   * Activate the next TabBar.
+   */
+  activateNextTabBar(): void {
+    const nextBar = this._adjacentBar('next');
+    if (nextBar) {
+      if (nextBar.currentTitle) {
+        nextBar.currentTitle.owner.activate();
+      }
+    }
+  }
+
+  /*
+   * Activate the next TabBar.
+   */
+  activatePreviousTabBar(): void {
+    const nextBar = this._adjacentBar('previous');
+    if (nextBar) {
+      if (nextBar.currentTitle) {
+        nextBar.currentTitle.owner.activate();
       }
     }
   }
@@ -537,6 +559,17 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
   collapseRight(): void {
     this._rightHandler.collapse();
     this._onLayoutModified();
+  }
+
+  /**
+   * Dispose the shell.
+   */
+  dispose(): void {
+    if (this.isDisposed) {
+      return;
+    }
+    this._layoutDebouncer.dispose();
+    super.dispose();
   }
 
   /**
@@ -585,7 +618,7 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
       case 'header':
         return this._headerPanel.widgets.length === 0;
       case 'top':
-        return this._topPanel.widgets.length === 0;
+        return this._topHandler.panel.widgets.length === 0;
       case 'bottom':
         return this._bottomPanel.widgets.length === 0;
       case 'right':
@@ -669,7 +702,7 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
       case 'header':
         return this._headerPanel.children();
       case 'top':
-        return this._topPanel.children();
+        return this._topHandler.panel.children();
       case 'bottom':
         return this._bottomPanel.children();
       default:
@@ -681,7 +714,7 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
    * Handle `after-attach` messages for the application shell.
    */
   protected onAfterAttach(msg: Message): void {
-    document.body.setAttribute(MODE_ATTRIBUTE, this.mode);
+    this.node.dataset.shellMode = this.mode;
   }
 
   /**
@@ -700,7 +733,7 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
     }
     options = options || this._sideOptionsCache.get(widget) || {};
     this._sideOptionsCache.set(widget, options);
-    let rank = 'rank' in options ? options.rank : DEFAULT_RANK;
+    const rank = 'rank' in options ? options.rank : DEFAULT_RANK;
     this._leftHandler.addWidget(widget, rank!);
     this._onLayoutModified();
   }
@@ -729,15 +762,26 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
 
     const dock = this._dockPanel;
     const mode = options.mode || 'tab-after';
-    let ref: Widget | null = null;
+    let ref: Widget | null = this.currentWidget;
 
     if (options.ref) {
-      ref = find(dock.widgets(), value => value.id === options.ref!) || null;
+      ref = find(dock.widgets(), value => value.id === options!.ref!) || null;
     }
 
+    const { title } = widget;
     // Add widget ID to tab so that we can get a handle on the tab's widget
     // (for context menu support)
-    widget.title.dataset = { ...widget.title.dataset, id: widget.id };
+    title.dataset = { ...title.dataset, id: widget.id };
+
+    if (title.icon instanceof LabIcon) {
+      // bind an appropriate style to the icon
+      title.icon = title.icon.bindprops({
+        stylesheet: 'mainAreaTab'
+      });
+    } else if (typeof title.icon === 'string' || !title.icon) {
+      // add some classes to help with displaying css background imgs
+      title.iconClass = classes(title.iconClass, 'jp-Icon');
+    }
 
     dock.addWidget(widget, { mode, ref });
 
@@ -791,9 +835,13 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
       console.error('Widgets added to app shell must have unique id property.');
       return;
     }
-    // Temporary: widgets are added to the panel in order of insertion.
-    this._topPanel.addWidget(widget);
+    options = options || {};
+    const rank = options.rank ?? DEFAULT_RANK;
+    this._topHandler.addWidget(widget, rank);
     this._onLayoutModified();
+    if (this._topHandler.panel.isHidden) {
+      this._topHandler.panel.show();
+    }
   }
 
   /**
@@ -923,16 +971,7 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
    * Handle a change to the layout.
    */
   private _onLayoutModified(): void {
-    // The dock can emit layout modified signals while in transient
-    // states (for instance, when switching from single-document to
-    // multiple-document mode). In those states, it can be unreliable
-    // for the signal consumers to query layout properties.
-    // We fix this by debouncing the layout modified signal so that it
-    // is only emitted after rearranging is done.
-    window.clearTimeout(this._debouncer);
-    this._debouncer = window.setTimeout(() => {
-      this._layoutModified.emit(undefined);
-    }, 0);
+    void this._layoutDebouncer.invoke();
   }
 
   /**
@@ -963,14 +1002,16 @@ export class LabShell extends Widget implements JupyterFrontEnd.IShell {
   private _dockPanel: DockPanel;
   private _isRestored = false;
   private _layoutModified = new Signal<this, void>(this);
+  private _layoutDebouncer = new Debouncer(() => {
+    this._layoutModified.emit(undefined);
+  }, 0);
   private _leftHandler: Private.SideBarHandler;
   private _restored = new PromiseDelegate<ILabShell.ILayout>();
   private _rightHandler: Private.SideBarHandler;
   private _tracker = new FocusTracker<Widget>();
   private _headerPanel: Panel;
-  private _topPanel: Panel;
+  private _topHandler: Private.PanelHandler;
   private _bottomPanel: Panel;
-  private _debouncer = 0;
   private _mainOptionsCache = new Map<Widget, DocumentRegistry.IOpenOptions>();
   private _sideOptionsCache = new Map<Widget, DocumentRegistry.IOpenOptions>();
 }
@@ -1020,14 +1061,41 @@ namespace Private {
   }
 
   /**
+   * A class which manages a panel and sorts its widgets by rank.
+   */
+  export class PanelHandler {
+    /**
+     * Get the panel managed by the handler.
+     */
+    get panel() {
+      return this._panel;
+    }
+
+    /**
+     * Add a widget to the panel.
+     *
+     * If the widget is already added, it will be moved.
+     */
+    addWidget(widget: Widget, rank: number): void {
+      widget.parent = null;
+      const item = { widget, rank };
+      const index = ArrayExt.upperBound(this._items, item, Private.itemCmp);
+      ArrayExt.insert(this._items, index, item);
+      this._panel.insertWidget(index, widget);
+    }
+
+    private _items = new Array<Private.IRankItem>();
+    private _panel = new Panel();
+  }
+
+  /**
    * A class which manages a side bar and related stacked panel.
    */
   export class SideBarHandler {
     /**
      * Construct a new side bar handler.
      */
-    constructor(side: string) {
-      this._side = side;
+    constructor() {
       this._sideBar = new TabBar<Widget>({
         insertBehavior: 'none',
         removeBehavior: 'none',
@@ -1080,7 +1148,7 @@ namespace Private {
      * @param id - The widget's unique ID.
      */
     activate(id: string): void {
-      let widget = this._findWidgetByID(id);
+      const widget = this._findWidgetByID(id);
       if (widget) {
         this._sideBar.currentTitle = widget.title;
         widget.activate();
@@ -1109,14 +1177,25 @@ namespace Private {
     addWidget(widget: Widget, rank: number): void {
       widget.parent = null;
       widget.hide();
-      let item = { widget, rank };
-      let index = this._findInsertIndex(item);
+      const item = { widget, rank };
+      const index = this._findInsertIndex(item);
       ArrayExt.insert(this._items, index, item);
       this._stackedPanel.insertWidget(index, widget);
       const title = this._sideBar.insertTab(index, widget.title);
       // Store the parent id in the title dataset
       // in order to dispatch click events to the right widget.
       title.dataset = { id: widget.id };
+
+      if (title.icon instanceof LabIcon) {
+        // bind an appropriate style to the icon
+        title.icon = title.icon.bindprops({
+          stylesheet: 'sideBar'
+        });
+      } else if (typeof title.icon === 'string' || !title.icon) {
+        // add some classes to help with displaying css background imgs
+        title.iconClass = classes(title.iconClass, 'jp-Icon', 'jp-Icon-20');
+      }
+
       this._refreshVisibility();
     }
 
@@ -1124,9 +1203,9 @@ namespace Private {
      * Dehydrate the side bar data.
      */
     dehydrate(): ILabShell.ISideArea {
-      let collapsed = this._sideBar.currentTitle === null;
-      let widgets = toArray(this._stackedPanel.widgets);
-      let currentWidget = widgets[this._sideBar.currentIndex];
+      const collapsed = this._sideBar.currentTitle === null;
+      const widgets = toArray(this._stackedPanel.widgets);
+      const currentWidget = widgets[this._sideBar.currentIndex];
       return { collapsed, currentWidget, widgets };
     }
 
@@ -1159,7 +1238,7 @@ namespace Private {
      * Find the widget which owns the given title, or `null`.
      */
     private _findWidgetByTitle(title: Title<Widget>): Widget | null {
-      let item = find(this._items, value => value.widget.title === title);
+      const item = find(this._items, value => value.widget.title === title);
       return item ? item.widget : null;
     }
 
@@ -1167,7 +1246,7 @@ namespace Private {
      * Find the widget with the given id, or `null`.
      */
     private _findWidgetByID(id: string): Widget | null {
-      let item = find(this._items, value => value.widget.id === id);
+      const item = find(this._items, value => value.widget.id === id);
       return item ? item.widget : null;
     }
 
@@ -1199,12 +1278,6 @@ namespace Private {
         newWidget.show();
       }
       this._lastCurrent = newWidget || oldWidget;
-      if (newWidget) {
-        const id = newWidget.id;
-        document.body.setAttribute(`data-${this._side}-sidebar-widget`, id);
-      } else {
-        document.body.removeAttribute(`data-${this._side}-sidebar-widget`);
-      }
       this._refreshVisibility();
     }
 
@@ -1231,7 +1304,6 @@ namespace Private {
     }
 
     private _items = new Array<Private.IRankItem>();
-    private _side: string;
     private _sideBar: TabBar<Widget>;
     private _stackedPanel: StackedPanel;
     private _lastCurrent: Widget | null;

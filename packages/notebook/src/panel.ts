@@ -1,24 +1,22 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
+import { isMarkdownCellModel } from '@jupyterlab/cells';
+
 import { Kernel, KernelMessage, Session } from '@jupyterlab/services';
 
-import { Token } from '@phosphor/coreutils';
+import { each } from '@lumino/algorithm';
 
-import { Message } from '@phosphor/messaging';
-
-import { ISignal, Signal } from '@phosphor/signaling';
+import { Token } from '@lumino/coreutils';
 
 import {
-  IClientSession,
+  ISessionContext,
   Printing,
   showDialog,
   Dialog
 } from '@jupyterlab/apputils';
 
-import { DocumentWidget } from '@jupyterlab/docregistry';
-
-import { RenderMimeRegistry } from '@jupyterlab/rendermime';
+import { DocumentWidget, DocumentRegistry } from '@jupyterlab/docregistry';
 
 import { INotebookModel } from './model';
 
@@ -55,16 +53,24 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
 
     // Set up things related to the context
     this.content.model = this.context.model;
-    this.context.session.kernelChanged.connect(this._onKernelChanged, this);
-    this.context.session.statusChanged.connect(
+    this.context.sessionContext.kernelChanged.connect(
+      this._onKernelChanged,
+      this
+    );
+    this.context.sessionContext.statusChanged.connect(
       this._onSessionStatusChanged,
       this
     );
-
+    this.context.saveState.connect(this._onSave, this);
     void this.revealed.then(() => {
+      if (this.isDisposed) {
+        // this widget has already been disposed, bail
+        return;
+      }
+
       // Set the document edit mode on initial open if it looks like a new document.
       if (this.content.widgets.length === 1) {
-        let cellModel = this.content.widgets[0].model;
+        const cellModel = this.content.widgets[0].model;
         if (cellModel.type === 'code' && cellModel.value.text === '') {
           this.content.mode = 'edit';
         }
@@ -72,38 +78,27 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
     });
   }
 
-  /**
-   * A signal emitted when the panel has been activated.
-   */
-  get activated(): ISignal<this, void> {
-    return this._activated;
+  _onSave(sender: DocumentRegistry.Context, state: DocumentRegistry.SaveState) {
+    if (state === 'started' && this.model) {
+      // Find markdown cells
+      const { cells } = this.model;
+      each(cells, cell => {
+        if (isMarkdownCellModel(cell)) {
+          for (const key of cell.attachments.keys) {
+            if (!cell.value.text.includes(key)) {
+              cell.attachments.remove(key);
+            }
+          }
+        }
+      });
+    }
   }
 
   /**
-   * The client session used by the panel.
+   * The session context used by the panel.
    */
-  get session(): IClientSession {
-    return this.context.session;
-  }
-
-  /**
-   * The content factory for the notebook.
-   *
-   * TODO: deprecate this in favor of the .content attribute
-   *
-   */
-  get contentFactory(): Notebook.IContentFactory {
-    return this.content.contentFactory;
-  }
-
-  /**
-   * The rendermime instance for the notebook.
-   *
-   * TODO: deprecate this in favor of the .content attribute
-   *
-   */
-  get rendermime(): RenderMimeRegistry {
-    return this.content.rendermime;
+  get sessionContext(): ISessionContext {
+    return this.context.sessionContext;
   }
 
   /**
@@ -114,8 +109,8 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
   /**
    * The model for the widget.
    */
-  get model(): INotebookModel {
-    return this.content ? this.content.model : null;
+  get model(): INotebookModel | null {
+    return this.content.model;
   }
 
   /**
@@ -127,10 +122,10 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
     this.content.editorConfig = config.editorConfig;
     this.content.notebookConfig = config.notebookConfig;
     // Update kernel shutdown behavior
-    const kernelPreference = this.context.session.kernelPreference;
-    this.context.session.kernelPreference = {
+    const kernelPreference = this.context.sessionContext.kernelPreference;
+    this.context.sessionContext.kernelPreference = {
       ...kernelPreference,
-      shutdownOnClose: config.kernelShutdown
+      shutdownOnDispose: config.kernelShutdown
     };
   }
 
@@ -149,16 +144,6 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
   dispose(): void {
     this.content.dispose();
     super.dispose();
-  }
-
-  /**
-   * Handle `'activate-request'` messages.
-   */
-  protected onActivateRequest(msg: Message): void {
-    super.onActivateRequest(msg);
-
-    // TODO: do we still need to emit this signal? Who is using it?
-    this._activated.emit(void 0);
   }
 
   /**
@@ -186,22 +171,25 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
    */
   private _onKernelChanged(
     sender: any,
-    args: Session.IKernelChangedArgs
+    args: Session.ISessionConnection.IKernelChangedArgs
   ): void {
     if (!this.model || !args.newValue) {
       return;
     }
-    let { newValue } = args;
-    void newValue.ready.then(() => {
-      if (this.model && this.context.session.kernel === newValue) {
-        this._updateLanguage(newValue.info.language_info);
+    const { newValue } = args;
+    void newValue.info.then(info => {
+      if (
+        this.model &&
+        this.context.sessionContext.session?.kernel === newValue
+      ) {
+        this._updateLanguage(info.language_info);
       }
     });
     void this._updateSpec(newValue);
   }
 
   private _onSessionStatusChanged(
-    sender: IClientSession,
+    sender: ISessionContext,
     status: Kernel.Status
   ) {
     // If the status is autorestarting, and we aren't already in a series of
@@ -211,9 +199,7 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
       // they know why their kernel state is gone.
       void showDialog({
         title: 'Kernel Restarting',
-        body: `The kernel for ${
-          this.session.path
-        } appears to have died. It will restart automatically.`,
+        body: `The kernel for ${this.sessionContext.session?.path} appears to have died. It will restart automatically.`,
         buttons: [Dialog.okButton()]
       });
       this._autorestarting = true;
@@ -231,26 +217,23 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
    * Update the kernel language.
    */
   private _updateLanguage(language: KernelMessage.ILanguageInfo): void {
-    this.model.metadata.set('language_info', language);
+    this.model!.metadata.set('language_info', language);
   }
 
   /**
    * Update the kernel spec.
    */
-  private _updateSpec(kernel: Kernel.IKernelConnection): Promise<void> {
-    return kernel.getSpec().then(spec => {
-      if (this.isDisposed) {
-        return;
-      }
-      this.model.metadata.set('kernelspec', {
-        name: kernel.name,
-        display_name: spec.display_name,
-        language: spec.language
-      });
+  private async _updateSpec(kernel: Kernel.IKernelConnection): Promise<void> {
+    const spec = await kernel.spec;
+    if (this.isDisposed) {
+      return;
+    }
+    this.model!.metadata.set('kernelspec', {
+      name: kernel.name,
+      display_name: spec?.display_name,
+      language: spec?.language
     });
   }
-
-  private _activated = new Signal<this, void>(this);
 
   /**
    * Whether we are currently in a series of autorestarts we have already

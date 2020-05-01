@@ -14,16 +14,25 @@
       "path": "../apputils"
     },
     {
-      "path": "../coreutils"
-    },
-    {
       "path": "../launcher"
     },
     {
       "path": "../mainmenu"
     },
     {
+      "path": "../running"
+    },
+    {
+      "path": "../services"
+    },
+    {
+      "path": "../settingregistry"
+    },
+    {
       "path": "../terminal"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

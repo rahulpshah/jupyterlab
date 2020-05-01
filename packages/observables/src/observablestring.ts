@@ -1,9 +1,9 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { IDisposable } from '@phosphor/disposable';
+import { IDisposable } from '@lumino/disposable';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
 import { IObservable } from './modeldb';
 
@@ -187,7 +187,7 @@ export class ObservableString implements IObservableString {
    * @param end - The ending index.
    */
   remove(start: number, end: number): void {
-    let oldValue: string = this._text.slice(start, end);
+    const oldValue: string = this._text.slice(start, end);
     this._text = this._text.slice(0, start) + this._text.slice(end);
     this._changed.emit({
       type: 'remove',

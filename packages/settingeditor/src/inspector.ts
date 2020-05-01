@@ -1,18 +1,21 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
-import { DataConnector, ISchemaValidator } from '@jupyterlab/coreutils';
+import { DataConnector } from '@jupyterlab/statedb';
 
 import { InspectionHandler, InspectorPanel } from '@jupyterlab/inspector';
 
 import {
+  IRenderMimeRegistry,
   RenderMimeRegistry,
   standardRendererFactories
 } from '@jupyterlab/rendermime';
 
-import { ReadonlyJSONObject } from '@phosphor/coreutils';
+import { ISchemaValidator } from '@jupyterlab/settingregistry';
+
+import { ReadonlyJSONObject } from '@lumino/coreutils';
 
 import { RawEditor } from './raweditor';
 
@@ -21,10 +24,12 @@ import { RawEditor } from './raweditor';
  */
 export function createInspector(
   editor: RawEditor,
-  rendermime?: RenderMimeRegistry
+  rendermime?: IRenderMimeRegistry
 ): InspectorPanel {
   const connector = new InspectorConnector(editor);
-  const inspector = new InspectorPanel();
+  const inspector = new InspectorPanel({
+    initialContent: 'Any errors will be listed here'
+  });
   const handler = new InspectionHandler({
     connector,
     rendermime:
@@ -64,18 +69,21 @@ class InspectorConnector extends DataConnector<
    */
   fetch(
     request: InspectionHandler.IRequest
-  ): Promise<InspectionHandler.IReply> {
-    return new Promise<InspectionHandler.IReply>(resolve => {
+  ): Promise<InspectionHandler.IReply | undefined> {
+    return new Promise<InspectionHandler.IReply | undefined>(resolve => {
       // Debounce requests at a rate of 100ms.
       const current = (this._current = window.setTimeout(() => {
         if (current !== this._current) {
-          return resolve(null);
+          return resolve(undefined);
         }
 
         const errors = this._validate(request.text);
 
         if (!errors) {
-          return resolve(null);
+          return resolve({
+            data: { 'text/markdown': 'No errors found' },
+            metadata: {}
+          });
         }
 
         resolve({ data: Private.render(errors), metadata: {} });
@@ -119,7 +127,7 @@ namespace Private {
     switch (error.keyword) {
       case 'additionalProperties':
         return `**\`[additional property error]\`**
-          \`${error.params.additionalProperty}\` is not a valid property`;
+          \`${error.params?.additionalProperty}\` is not a valid property`;
       case 'syntax':
         return `**\`[syntax error]\`** *${error.message}*`;
       case 'type':

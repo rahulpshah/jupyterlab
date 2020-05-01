@@ -1,16 +1,14 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
 import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 
-import { PromiseDelegate } from '@phosphor/coreutils';
+import { PromiseDelegate } from '@lumino/coreutils';
 
 // Stub for window MathJax.
-declare var MathJax: any;
-
-import '../style/index.css';
+declare let MathJax: any;
 
 /**
  * The MathJax Typesetter.
@@ -55,12 +53,10 @@ export class MathJaxTypesetter implements IRenderMime.ILatexTypesetter {
    * Initialize MathJax.
    */
   private _init(): void {
-    let head = document.getElementsByTagName('head')[0];
-    let script = document.createElement('script');
+    const head = document.getElementsByTagName('head')[0];
+    const script = document.createElement('script');
     script.type = 'text/javascript';
-    script.src = `${this._url}?config=${
-      this._config
-    }&amp;delayStartupUntil=configured`;
+    script.src = `${this._url}?config=${this._config}&amp;delayStartupUntil=configured`;
     script.charset = 'utf-8';
     head.appendChild(script);
     script.addEventListener('load', () => {
@@ -75,8 +71,14 @@ export class MathJaxTypesetter implements IRenderMime.ILatexTypesetter {
   private _onLoad(): void {
     MathJax.Hub.Config({
       tex2jax: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        inlineMath: [
+          ['$', '$'],
+          ['\\(', '\\)']
+        ],
+        displayMath: [
+          ['$$', '$$'],
+          ['\\[', '\\]']
+        ],
         processEscapes: true,
         processEnvironments: true
       },
@@ -94,7 +96,8 @@ export class MathJaxTypesetter implements IRenderMime.ILatexTypesetter {
         styles: { '.MathJax_Display': { margin: 0 } },
         linebreaks: { automatic: true }
       },
-      skipStartupTypeset: true
+      skipStartupTypeset: true,
+      messageStyle: 'none'
     });
     MathJax.Hub.Configured();
     this._initPromise.resolve(void 0);

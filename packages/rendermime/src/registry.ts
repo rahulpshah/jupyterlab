@@ -1,4 +1,4 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
@@ -9,36 +9,16 @@ import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 import { PathExt, URLExt } from '@jupyterlab/coreutils';
 
 import {
-  IClientSession,
+  ISessionContext,
   ISanitizer,
   defaultSanitizer
 } from '@jupyterlab/apputils';
 
-import { ReadonlyJSONObject, Token } from '@phosphor/coreutils';
+import { ReadonlyPartialJSONObject } from '@lumino/coreutils';
 
 import { MimeModel } from './mimemodel';
 
-/* tslint:disable */
-/**
- * The rendermime token.
- */
-export const IRenderMimeRegistry = new Token<IRenderMimeRegistry>(
-  '@jupyterlab/rendermime:IRenderMimeRegistry'
-);
-
-export interface IRenderMimeRegistry extends RenderMimeRegistry {}
-/* tslint:enable */
-
-/* tslint:disable */
-/**
- * The latex typesetter token.
- */
-export const ILatexTypesetter = new Token<IRenderMime.ILatexTypesetter>(
-  '@jupyterlab/rendermime:ILatexTypesetter'
-);
-
-export interface ILatexTypesetter extends IRenderMime.ILatexTypesetter {}
-/* tslint:enable */
+import { IRenderMimeRegistry } from './tokens';
 
 /**
  * An object which manages mime renderer factories.
@@ -50,7 +30,7 @@ export interface ILatexTypesetter extends IRenderMime.ILatexTypesetter {}
  * #### Notes
  * This class is not intended to be subclassed.
  */
-export class RenderMimeRegistry {
+export class RenderMimeRegistry implements IRenderMimeRegistry {
   /**
    * Construct a new rendermime.
    *
@@ -65,7 +45,7 @@ export class RenderMimeRegistry {
 
     // Add the initial factories.
     if (options.initialFactories) {
-      for (let factory of options.initialFactories) {
+      for (const factory of options.initialFactories) {
         this.addFactory(factory);
       }
     }
@@ -112,12 +92,12 @@ export class RenderMimeRegistry {
    *   or `undefined` if the mime type cannot be rendered.
    */
   preferredMimeType(
-    bundle: ReadonlyJSONObject,
+    bundle: ReadonlyPartialJSONObject,
     safe: 'ensure' | 'prefer' | 'any' = 'ensure'
   ): string | undefined {
     // Try to find a safe factory first, if preferred.
     if (safe === 'ensure' || safe === 'prefer') {
-      for (let mt of this.mimeTypes) {
+      for (const mt of this.mimeTypes) {
         if (mt in bundle && this._factories[mt].safe) {
           return mt;
         }
@@ -126,7 +106,7 @@ export class RenderMimeRegistry {
 
     if (safe !== 'ensure') {
       // Otherwise, search for the best factory among all factories.
-      for (let mt of this.mimeTypes) {
+      for (const mt of this.mimeTypes) {
         if (mt in bundle) {
           return mt;
         }
@@ -180,13 +160,14 @@ export class RenderMimeRegistry {
    *
    * @returns A new independent clone of the rendermime.
    */
-  clone(options: RenderMimeRegistry.ICloneOptions = {}): RenderMimeRegistry {
+  clone(options: IRenderMimeRegistry.ICloneOptions = {}): RenderMimeRegistry {
     // Create the clone.
-    let clone = new RenderMimeRegistry({
+    const clone = new RenderMimeRegistry({
       resolver: options.resolver || this.resolver || undefined,
       sanitizer: options.sanitizer || this.sanitizer || undefined,
       linkHandler: options.linkHandler || this.linkHandler || undefined,
-      latexTypesetter: options.latexTypesetter || this.latexTypesetter
+      latexTypesetter:
+        options.latexTypesetter || this.latexTypesetter || undefined
     });
 
     // Clone the internal state.
@@ -230,7 +211,7 @@ export class RenderMimeRegistry {
         rank = 100;
       }
     }
-    for (let mt of factory.mimeTypes) {
+    for (const mt of factory.mimeTypes) {
       this._factories[mt] = factory;
       this._ranks[mt] = { rank, id: this._id++ };
     }
@@ -256,7 +237,7 @@ export class RenderMimeRegistry {
    * @returns The rank of the mime type or undefined.
    */
   getRank(mimeType: string): number | undefined {
-    let rank = this._ranks[mimeType];
+    const rank = this._ranks[mimeType];
     return rank && rank.rank;
   }
 
@@ -274,7 +255,7 @@ export class RenderMimeRegistry {
     if (!this._ranks[mimeType]) {
       return;
     }
-    let id = this._id++;
+    const id = this._id++;
     this._ranks[mimeType] = { rank, id };
     this._types = null;
   }
@@ -324,62 +305,58 @@ export namespace RenderMimeRegistry {
   }
 
   /**
-   * The options used to clone a rendermime instance.
-   */
-  export interface ICloneOptions {
-    /**
-     * The new sanitizer used to sanitize untrusted html inputs.
-     */
-    sanitizer?: IRenderMime.ISanitizer;
-
-    /**
-     * The new resolver object.
-     */
-    resolver?: IRenderMime.IResolver;
-
-    /**
-     * The new path handler.
-     */
-    linkHandler?: IRenderMime.ILinkHandler;
-
-    /**
-     * The new LaTeX typesetter.
-     */
-    latexTypesetter?: IRenderMime.ILatexTypesetter;
-  }
-
-  /**
-   * A default resolver that uses a session and a contents manager.
+   * A default resolver that uses a given reference path and a contents manager.
    */
   export class UrlResolver implements IRenderMime.IResolver {
     /**
-     * Create a new url resolver for a console.
+     * Create a new url resolver.
      */
     constructor(options: IUrlResolverOptions) {
-      this._session = options.session;
+      if (options.path) {
+        this._path = options.path;
+      } else if (options.session) {
+        this._session = options.session;
+      } else {
+        throw new Error(
+          "Either 'path' or 'session' must be given as a constructor option"
+        );
+      }
       this._contents = options.contents;
+    }
+
+    /**
+     * The path of the object, from which local urls can be derived.
+     */
+    get path(): string {
+      return this._path ?? this._session.path;
+    }
+    set path(value: string) {
+      this._path = value;
     }
 
     /**
      * Resolve a relative url to an absolute url path.
      */
-    resolveUrl(url: string): Promise<string> {
+    async resolveUrl(url: string): Promise<string> {
       if (this.isLocal(url)) {
-        const cwd = encodeURI(PathExt.dirname(this._session.path));
+        const cwd = encodeURI(PathExt.dirname(this.path));
         url = PathExt.resolve(cwd, url);
       }
-      return Promise.resolve(url);
+      return url;
     }
 
     /**
      * Get the download url of a given absolute url path.
+     *
+     * #### Notes
+     * This URL may include a query parameter.
      */
-    getDownloadUrl(url: string): Promise<string> {
+    async getDownloadUrl(url: string): Promise<string> {
       if (this.isLocal(url)) {
         // decode url->path before passing to contents api
         return this._contents.getDownloadUrl(decodeURI(url));
       }
-      return Promise.resolve(url);
+      return url;
     }
 
     /**
@@ -397,7 +374,8 @@ export namespace RenderMimeRegistry {
       return URLExt.isLocal(url) || !!this._contents.driveName(path);
     }
 
-    private _session: Session.ISession | IClientSession;
+    private _path: string;
+    private _session: ISessionContext | Session.ISessionConnection;
     private _contents: Contents.IManager;
   }
 
@@ -406,9 +384,25 @@ export namespace RenderMimeRegistry {
    */
   export interface IUrlResolverOptions {
     /**
-     * The session used by the resolver.
+     * The path providing context for local urls.
+     *
+     * #### Notes
+     * Either session or path must be given, and path takes precedence.
      */
-    session: Session.ISession | IClientSession;
+    path?: string;
+
+    /**
+     * The session used by the resolver.
+     *
+     * @deprecated use the `path` option instead and update it as needed.
+     *
+     * #### Notes
+     * For convenience, this can be a session context as well. Either session
+     * or path must be given, and path takes precedence.
+     *
+     * TODO: remove this option and make `path` required.
+     */
+    session?: ISessionContext | Session.ISessionConnection;
 
     /**
      * The contents manager used by the resolver.
@@ -441,12 +435,20 @@ namespace Private {
    */
   export function sortedTypes(map: RankMap): string[] {
     return Object.keys(map).sort((a, b) => {
-      let p1 = map[a];
-      let p2 = map[b];
+      const p1 = map[a];
+      const p2 = map[b];
       if (p1.rank !== p2.rank) {
         return p1.rank - p2.rank;
       }
       return p1.id - p2.id;
     });
+  }
+
+  export function sessionConnection(
+    s: Session.ISessionConnection | ISessionContext
+  ): Session.ISessionConnection | null {
+    return (s as any).sessionChanged
+      ? (s as ISessionContext).session
+      : (s as Session.ISessionConnection);
   }
 }

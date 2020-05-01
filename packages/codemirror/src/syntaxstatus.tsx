@@ -15,11 +15,11 @@ import {
 
 import { Mode } from '.';
 
-import { CommandRegistry } from '@phosphor/commands';
+import { CommandRegistry } from '@lumino/commands';
 
-import { JSONObject } from '@phosphor/coreutils';
+import { JSONObject } from '@lumino/coreutils';
 
-import { Menu } from '@phosphor/widgets';
+import { Menu } from '@lumino/widgets';
 
 /**
  * A namespace for `EditorSyntaxComponentStatics`.
@@ -64,8 +64,7 @@ export class EditorSyntaxStatus extends VDomRenderer<EditorSyntaxStatus.Model> {
    * Construct a new VDomRenderer for the status item.
    */
   constructor(opts: EditorSyntaxStatus.IOptions) {
-    super();
-    this.model = new EditorSyntaxStatus.Model();
+    super(new EditorSyntaxStatus.Model());
     this._commands = opts.commands;
     this.addClass(interactiveItem);
     this.title.caption = 'Change text editor syntax highlighting';
@@ -91,14 +90,14 @@ export class EditorSyntaxStatus extends VDomRenderer<EditorSyntaxStatus.Model> {
    */
   private _handleClick = () => {
     const modeMenu = new Menu({ commands: this._commands });
-    let command = 'codemirror:change-mode';
+    const command = 'codemirror:change-mode';
     if (this._popup) {
       this._popup.dispose();
     }
     Mode.getModeInfo()
       .sort((a, b) => {
-        let aName = a.name || '';
-        let bName = b.name || '';
+        const aName = a.name || '';
+        const bName = b.name || '';
         return aName.localeCompare(bName);
       })
       .forEach(spec => {
@@ -106,7 +105,7 @@ export class EditorSyntaxStatus extends VDomRenderer<EditorSyntaxStatus.Model> {
           return;
         }
 
-        let args: JSONObject = {
+        const args: JSONObject = {
           insertSpaces: true,
           name: spec.name!
         };

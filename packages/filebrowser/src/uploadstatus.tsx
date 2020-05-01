@@ -2,13 +2,13 @@
 // Distributed under the terms of the Modified BSD License.
 //
 
-import { VDomRenderer, InstanceTracker, VDomModel } from '@jupyterlab/apputils';
+import { VDomRenderer, VDomModel, WidgetTracker } from '@jupyterlab/apputils';
 
 import { IChangedArgs } from '@jupyterlab/coreutils';
 
 import { GroupItem, ProgressBar, TextItem } from '@jupyterlab/statusbar';
 
-import { ArrayExt } from '@phosphor/algorithm';
+import { ArrayExt } from '@lumino/algorithm';
 
 import { IUploadModel, FileBrowserModel, FileBrowser } from '.';
 
@@ -65,13 +65,13 @@ export class FileUploadStatus extends VDomRenderer<FileUploadStatus.Model> {
    * Construct a new FileUpload status item.
    */
   constructor(opts: FileUploadStatus.IOptions) {
-    super();
+    super(
+      new FileUploadStatus.Model(
+        opts.tracker.currentWidget && opts.tracker.currentWidget.model
+      )
+    );
     this._tracker = opts.tracker;
     this._tracker.currentChanged.connect(this._onBrowserChange);
-
-    this.model = new FileUploadStatus.Model(
-      this._tracker.currentWidget && this._tracker.currentWidget.model
-    );
   }
 
   /**
@@ -98,7 +98,7 @@ export class FileUploadStatus extends VDomRenderer<FileUploadStatus.Model> {
   }
 
   private _onBrowserChange = (
-    tracker: InstanceTracker<FileBrowser>,
+    tracker: WidgetTracker<FileBrowser>,
     browser: FileBrowser | null
   ) => {
     if (browser === null) {
@@ -108,7 +108,7 @@ export class FileUploadStatus extends VDomRenderer<FileUploadStatus.Model> {
     }
   };
 
-  private _tracker: InstanceTracker<FileBrowser>;
+  private _tracker: WidgetTracker<FileBrowser>;
 }
 
 /**
@@ -211,7 +211,7 @@ export namespace FileUploadStatus {
     /**
      * The application file browser tracker.
      */
-    readonly tracker: InstanceTracker<FileBrowser>;
+    readonly tracker: WidgetTracker<FileBrowser>;
   }
 }
 

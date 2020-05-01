@@ -5,6 +5,5 @@
     "rootDir": "src",
     "module": "commonjs"
   },
-  "files": ["src/plugin-schema.json"],
   "include": ["src/*"]
 }

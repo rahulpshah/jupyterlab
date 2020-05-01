@@ -16,13 +16,13 @@
       "path": "../coreutils"
     },
     {
-      "path": "../inspector"
-    },
-    {
       "path": "../mainmenu"
     },
     {
       "path": "../services"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

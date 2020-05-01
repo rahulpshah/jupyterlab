@@ -1,25 +1,25 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { each, zip } from '@phosphor/algorithm';
+import { each, zip } from '@lumino/algorithm';
 
-import { Message } from '@phosphor/messaging';
+import { Message } from '@lumino/messaging';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import { Styling } from '@jupyterlab/apputils';
 
 /**
  * The supported parsing delimiters.
  */
-const DELIMITERS = [',', ';', '\t', '|'];
+const DELIMITERS = [',', ';', '\t', '|', '#'];
 
 /**
  * The labels for each delimiter as they appear in the dropdown menu.
  */
-const LABELS = [',', ';', 'tab', 'pipe'];
+const LABELS = [',', ';', 'tab', 'pipe', 'hash'];
 
 /**
  * The class name added to a csv toolbar widget.
@@ -119,13 +119,13 @@ namespace Private {
    * Create the node for the delimiter switcher.
    */
   export function createNode(selected: string): HTMLElement {
-    let div = document.createElement('div');
-    let label = document.createElement('span');
-    let select = document.createElement('select');
+    const div = document.createElement('div');
+    const label = document.createElement('span');
+    const select = document.createElement('select');
     label.textContent = 'Delimiter: ';
     label.className = CSV_DELIMITER_LABEL_CLASS;
     each(zip(DELIMITERS, LABELS), ([delimiter, label]) => {
-      let option = document.createElement('option');
+      const option = document.createElement('option');
       option.value = delimiter;
       option.textContent = label;
       if (delimiter === selected) {
@@ -134,7 +134,7 @@ namespace Private {
       select.appendChild(option);
     });
     div.appendChild(label);
-    let node = Styling.wrapSelect(select);
+    const node = Styling.wrapSelect(select);
     node.classList.add(CSV_DELIMITER_DROPDOWN_CLASS);
     div.appendChild(node);
     return div;

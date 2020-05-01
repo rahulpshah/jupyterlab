@@ -7,9 +7,9 @@ import { PathExt } from '@jupyterlab/coreutils';
 
 import { Contents } from '@jupyterlab/services';
 
-import { JSONObject } from '@phosphor/coreutils';
+import { JSONObject } from '@lumino/coreutils';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import { IDocumentManager } from './';
 
@@ -48,10 +48,10 @@ export function renameDialog(
     title: 'Rename File',
     body: new RenameHandler(oldPath),
     focusNodeSelector: 'input',
-    buttons: [Dialog.cancelButton(), Dialog.okButton({ label: 'RENAME' })]
+    buttons: [Dialog.cancelButton(), Dialog.okButton({ label: 'Rename' })]
   }).then(result => {
     if (!result.value) {
-      return;
+      return null;
     }
     if (!isValidFileName(result.value)) {
       void showErrorMessage(
@@ -64,8 +64,8 @@ export function renameDialog(
       );
       return null;
     }
-    let basePath = PathExt.dirname(oldPath);
-    let newPath = PathExt.join(basePath, result.value);
+    const basePath = PathExt.dirname(oldPath);
+    const newPath = PathExt.join(basePath, result.value);
     return renameFile(manager, oldPath, newPath);
   });
 }
@@ -95,10 +95,10 @@ export function renameFile(
  * Ask the user whether to overwrite a file.
  */
 export function shouldOverwrite(path: string): Promise<boolean> {
-  let options = {
+  const options = {
     title: 'Overwrite file?',
     body: `"${path}" already exists, overwrite?`,
-    buttons: [Dialog.cancelButton(), Dialog.warnButton({ label: 'OVERWRITE' })]
+    buttons: [Dialog.cancelButton(), Dialog.warnButton({ label: 'Overwrite' })]
   };
   return showDialog(options).then(result => {
     return Promise.resolve(result.button.accept);
@@ -125,8 +125,8 @@ class RenameHandler extends Widget {
   constructor(oldPath: string) {
     super({ node: Private.createRenameNode(oldPath) });
     this.addClass(FILE_DIALOG_CLASS);
-    let ext = PathExt.extname(oldPath);
-    let value = (this.inputNode.value = PathExt.basename(oldPath));
+    const ext = PathExt.extname(oldPath);
+    const value = (this.inputNode.value = PathExt.basename(oldPath));
     this.inputNode.setSelectionRange(0, value.length - ext.length);
   }
 
@@ -145,49 +145,6 @@ class RenameHandler extends Widget {
   }
 }
 
-/*
- * A widget used to open a file directly.
- */
-class OpenDirectWidget extends Widget {
-  /**
-   * Construct a new open file widget.
-   */
-  constructor() {
-    super({ node: Private.createOpenNode() });
-  }
-
-  /**
-   * Get the value of the widget.
-   */
-  getValue(): string {
-    return this.inputNode.value;
-  }
-
-  /**
-   * Get the input text node.
-   */
-  get inputNode(): HTMLInputElement {
-    return this.node.getElementsByTagName('input')[0] as HTMLInputElement;
-  }
-}
-
-/**
- * Create the node for the open handler.
- */
-export function getOpenPath(contentsManager: any): Promise<string | undefined> {
-  return showDialog({
-    title: 'Open File',
-    body: new OpenDirectWidget(),
-    buttons: [Dialog.cancelButton(), Dialog.okButton({ label: 'OPEN' })],
-    focusNodeSelector: 'input'
-  }).then((result: any) => {
-    if (result.button.label === 'OPEN') {
-      return result.value;
-    }
-    return;
-  });
-}
-
 /**
  * A namespace for private data.
  */
@@ -196,38 +153,21 @@ namespace Private {
    * Create the node for a rename handler.
    */
   export function createRenameNode(oldPath: string): HTMLElement {
-    let body = document.createElement('div');
-    let existingLabel = document.createElement('label');
+    const body = document.createElement('div');
+    const existingLabel = document.createElement('label');
     existingLabel.textContent = 'File Path';
-    let existingPath = document.createElement('span');
+    const existingPath = document.createElement('span');
     existingPath.textContent = oldPath;
 
-    let nameTitle = document.createElement('label');
+    const nameTitle = document.createElement('label');
     nameTitle.textContent = 'New Name';
     nameTitle.className = RENAME_NEWNAME_TITLE_CLASS;
-    let name = document.createElement('input');
+    const name = document.createElement('input');
 
     body.appendChild(existingLabel);
     body.appendChild(existingPath);
     body.appendChild(nameTitle);
     body.appendChild(name);
-    return body;
-  }
-
-  /**
-   * Create the node for a open widget.
-   */
-  export function createOpenNode(): HTMLElement {
-    let body = document.createElement('div');
-    let existingLabel = document.createElement('label');
-    existingLabel.textContent = 'File Path:';
-
-    let input = document.createElement('input');
-    input.value = '';
-    input.placeholder = '/path/to/file';
-
-    body.appendChild(existingLabel);
-    body.appendChild(input);
     return body;
   }
 }

@@ -3,7 +3,7 @@
 
 import CodeMirror from 'codemirror';
 
-import { Menu } from '@phosphor/widgets';
+import { Menu } from '@lumino/widgets';
 
 import {
   ILabShell,
@@ -11,7 +11,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 
-import { IMainMenu, IEditMenu } from '@jupyterlab/mainmenu';
+import { IEditMenu, IMainMenu } from '@jupyterlab/mainmenu';
 
 import { IEditorServices } from '@jupyterlab/codeeditor';
 
@@ -22,11 +22,11 @@ import {
   Mode
 } from '@jupyterlab/codemirror';
 
-import { ISettingRegistry } from '@jupyterlab/coreutils';
-
 import { IDocumentWidget } from '@jupyterlab/docregistry';
 
 import { IEditorTracker, FileEditor } from '@jupyterlab/fileeditor';
+
+import { ISettingRegistry } from '@jupyterlab/settingregistry';
 
 import { IStatusBar } from '@jupyterlab/statusbar';
 
@@ -71,17 +71,22 @@ const commands: JupyterFrontEndPlugin<void> = {
 export const editorSyntaxStatus: JupyterFrontEndPlugin<void> = {
   id: '@jupyterlab/codemirror-extension:editor-syntax-status',
   autoStart: true,
-  requires: [IStatusBar, IEditorTracker, ILabShell],
+  requires: [IEditorTracker, ILabShell],
+  optional: [IStatusBar],
   activate: (
     app: JupyterFrontEnd,
-    statusBar: IStatusBar,
     tracker: IEditorTracker,
-    labShell: ILabShell
+    labShell: ILabShell,
+    statusBar: IStatusBar | null
   ) => {
-    let item = new EditorSyntaxStatus({ commands: app.commands });
+    if (!statusBar) {
+      // Automatically disable if statusbar missing
+      return;
+    }
+    const item = new EditorSyntaxStatus({ commands: app.commands });
     labShell.currentChanged.connect(() => {
       const current = labShell.currentWidget;
-      if (current && tracker.has(current)) {
+      if (current && tracker.has(current) && item.model) {
         item.model.editor = (current as IDocumentWidget<
           FileEditor
         >).content.editor;
@@ -94,8 +99,8 @@ export const editorSyntaxStatus: JupyterFrontEndPlugin<void> = {
         align: 'left',
         rank: 0,
         isActive: () =>
-          labShell.currentWidget &&
-          tracker.currentWidget &&
+          !!labShell.currentWidget &&
+          !!tracker.currentWidget &&
           labShell.currentWidget === tracker.currentWidget
       }
     );
@@ -143,25 +148,40 @@ function activateEditorCommands(
     scrollPastEnd,
     styleActiveLine,
     styleSelectedText,
-    selectionPointer
+    selectionPointer,
+    lineWiseCopyCut
   } = CodeMirrorEditor.defaultConfig;
 
   /**
    * Update the setting values.
    */
-  function updateSettings(settings: ISettingRegistry.ISettings): void {
+  async function updateSettings(
+    settings: ISettingRegistry.ISettings
+  ): Promise<void> {
     keyMap = (settings.get('keyMap').composite as string | null) || keyMap;
+
+    // Lazy loading of vim mode
+    if (keyMap === 'vim') {
+      // @ts-ignore
+      await import('codemirror/keymap/vim.js');
+    }
+
     theme = (settings.get('theme').composite as string | null) || theme;
-    scrollPastEnd = settings.get('scrollPastEnd').composite as boolean | null;
+    scrollPastEnd =
+      (settings.get('scrollPastEnd').composite as boolean | null) ??
+      scrollPastEnd;
     styleActiveLine =
-      (settings.get('styleActiveLine').composite as boolean | object) ||
-      styleActiveLine;
+      (settings.get('styleActiveLine').composite as
+        | boolean
+        | CodeMirror.StyleActiveLine) ?? styleActiveLine;
     styleSelectedText =
-      (settings.get('styleSelectedText').composite as boolean) ||
+      (settings.get('styleSelectedText').composite as boolean) ??
       styleSelectedText;
     selectionPointer =
-      (settings.get('selectionPointer').composite as boolean | string) ||
+      (settings.get('selectionPointer').composite as boolean | string) ??
       selectionPointer;
+    lineWiseCopyCut =
+      (settings.get('lineWiseCopyCut').composite as boolean) ?? lineWiseCopyCut;
   }
 
   /**
@@ -170,24 +190,25 @@ function activateEditorCommands(
   function updateTracker(): void {
     tracker.forEach(widget => {
       if (widget.content.editor instanceof CodeMirrorEditor) {
-        let cm = widget.content.editor.editor;
+        const cm = widget.content.editor.editor;
         cm.setOption('keyMap', keyMap);
         cm.setOption('theme', theme);
         cm.setOption('scrollPastEnd', scrollPastEnd);
         cm.setOption('styleActiveLine', styleActiveLine);
         cm.setOption('styleSelectedText', styleSelectedText);
         cm.setOption('selectionPointer', selectionPointer);
+        cm.setOption('lineWiseCopyCut', lineWiseCopyCut);
       }
     });
   }
 
   // Fetch the initial state of the settings.
   Promise.all([settingRegistry.load(id), restored])
-    .then(([settings]) => {
-      updateSettings(settings);
+    .then(async ([settings]) => {
+      await updateSettings(settings);
       updateTracker();
-      settings.changed.connect(() => {
-        updateSettings(settings);
+      settings.changed.connect(async () => {
+        await updateSettings(settings);
         updateTracker();
       });
     })
@@ -201,13 +222,14 @@ function activateEditorCommands(
    */
   tracker.widgetAdded.connect((sender, widget) => {
     if (widget.content.editor instanceof CodeMirrorEditor) {
-      let cm = widget.content.editor.editor;
+      const cm = widget.content.editor.editor;
       cm.setOption('keyMap', keyMap);
       cm.setOption('theme', theme);
       cm.setOption('scrollPastEnd', scrollPastEnd);
       cm.setOption('styleActiveLine', styleActiveLine);
       cm.setOption('styleSelectedText', styleSelectedText);
       cm.setOption('selectionPointer', selectionPointer);
+      cm.setOption('lineWiseCopyCut', lineWiseCopyCut);
     }
   });
 
@@ -244,7 +266,6 @@ function activateEditorCommands(
       const key = 'theme';
       const value = (theme = (args['theme'] as string) || theme);
 
-      updateTracker();
       return settingRegistry.set(id, key, value).catch((reason: Error) => {
         console.error(`Failed to set ${id}:${key} - ${reason.message}`);
       });
@@ -254,14 +275,13 @@ function activateEditorCommands(
 
   commands.addCommand(CommandIDs.changeKeyMap, {
     label: args => {
-      let title = args['keyMap'] as string;
+      const title = args['keyMap'] as string;
       return title === 'sublime' ? 'Sublime Text' : title;
     },
     execute: args => {
       const key = 'keyMap';
       const value = (keyMap = (args['keyMap'] as string) || keyMap);
 
-      updateTracker();
       return settingRegistry.set(id, key, value).catch((reason: Error) => {
         console.error(`Failed to set ${id}:${key} - ${reason.message}`);
       });
@@ -272,11 +292,11 @@ function activateEditorCommands(
   commands.addCommand(CommandIDs.find, {
     label: 'Find...',
     execute: () => {
-      let widget = tracker.currentWidget;
+      const widget = tracker.currentWidget;
       if (!widget) {
         return;
       }
-      let editor = widget.content.editor as CodeMirrorEditor;
+      const editor = widget.content.editor as CodeMirrorEditor;
       editor.execCommand('find');
     },
     isEnabled
@@ -285,11 +305,11 @@ function activateEditorCommands(
   commands.addCommand(CommandIDs.goToLine, {
     label: 'Go to Line...',
     execute: () => {
-      let widget = tracker.currentWidget;
+      const widget = tracker.currentWidget;
       if (!widget) {
         return;
       }
-      let editor = widget.content.editor as CodeMirrorEditor;
+      const editor = widget.content.editor as CodeMirrorEditor;
       editor.execCommand('jumpToLine');
     },
     isEnabled
@@ -298,10 +318,10 @@ function activateEditorCommands(
   commands.addCommand(CommandIDs.changeMode, {
     label: args => args['name'] as string,
     execute: args => {
-      let name = args['name'] as string;
-      let widget = tracker.currentWidget;
+      const name = args['name'] as string;
+      const widget = tracker.currentWidget;
       if (name && widget) {
-        let spec = Mode.findByName(name);
+        const spec = Mode.findByName(name);
         if (spec) {
           widget.content.model.mimeType = spec.mime;
         }
@@ -309,21 +329,21 @@ function activateEditorCommands(
     },
     isEnabled,
     isToggled: args => {
-      let widget = tracker.currentWidget;
+      const widget = tracker.currentWidget;
       if (!widget) {
         return false;
       }
-      let mime = widget.content.model.mimeType;
-      let spec = Mode.findByMIME(mime);
-      let name = spec && spec.name;
+      const mime = widget.content.model.mimeType;
+      const spec = Mode.findByMIME(mime);
+      const name = spec && spec.name;
       return args['name'] === name;
     }
   });
 
   Mode.getModeInfo()
     .sort((a, b) => {
-      let aName = a.name || '';
-      let bName = b.name || '';
+      const aName = a.name || '';
+      const bName = b.name || '';
       return aName.localeCompare(bName);
     })
     .forEach(spec => {
@@ -333,7 +353,7 @@ function activateEditorCommands(
       }
       modeMenu.addItem({
         command: CommandIDs.changeMode,
-        args: { ...spec }
+        args: { ...spec } as any // TODO: Casting to `any` until lumino typings are fixed
       });
     });
 
@@ -384,7 +404,7 @@ function activateEditorCommands(
     mainMenu.editMenu.goToLiners.add({
       tracker,
       goToLine: (widget: IDocumentWidget<FileEditor>) => {
-        let editor = widget.content.editor as CodeMirrorEditor;
+        const editor = widget.content.editor as CodeMirrorEditor;
         editor.execCommand('jumpToLine');
       }
     } as IEditMenu.IGoToLiner<IDocumentWidget<FileEditor>>);

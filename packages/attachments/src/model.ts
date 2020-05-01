@@ -1,7 +1,7 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { nbformat } from '@jupyterlab/coreutils';
+import * as nbformat from '@jupyterlab/nbformat';
 
 import {
   IObservableMap,
@@ -19,9 +19,9 @@ import {
 
 import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 
-import { IDisposable } from '@phosphor/disposable';
+import { IDisposable } from '@lumino/disposable';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
 /**
  * The model for attachments.
@@ -60,12 +60,18 @@ export interface IAttachmentsModel extends IDisposable {
   /**
    * Get an item for the specified key.
    */
-  get(key: string): IAttachmentModel;
+  get(key: string): IAttachmentModel | undefined;
 
   /**
    * Set the value of the specified key.
    */
   set(key: string, attachment: nbformat.IMimeBundle): void;
+
+  /**
+   * Remove the attachment whose name is the specified key.
+   * Note that this is optional only until Jupyterlab 2.0 release.
+   */
+  remove: (key: string) => void;
 
   /**
    * Clear all of the attachments.
@@ -139,8 +145,10 @@ export class AttachmentsModel implements IAttachmentsModel {
     this.contentFactory =
       options.contentFactory || AttachmentsModel.defaultContentFactory;
     if (options.values) {
-      for (let key of Object.keys(options.values)) {
-        this.set(key, options.values[key]);
+      for (const key of Object.keys(options.values)) {
+        if (options.values[key] !== undefined) {
+          this.set(key, options.values[key]!);
+        }
       }
     }
     this._map.changed.connect(this._onMapChanged, this);
@@ -221,7 +229,7 @@ export class AttachmentsModel implements IAttachmentsModel {
   /**
    * Get an item at the specified key.
    */
-  get(key: string): IAttachmentModel {
+  get(key: string): IAttachmentModel | undefined {
     return this._map.get(key);
   }
 
@@ -230,8 +238,15 @@ export class AttachmentsModel implements IAttachmentsModel {
    */
   set(key: string, value: nbformat.IMimeBundle): void {
     // Normalize stream data.
-    let item = this._createItem({ value });
+    const item = this._createItem({ value });
     this._map.set(key, item);
+  }
+
+  /**
+   * Remove the attachment whose name is the specified key
+   */
+  remove(key: string): void {
+    this._map.delete(key);
   }
 
   /**
@@ -253,7 +268,9 @@ export class AttachmentsModel implements IAttachmentsModel {
   fromJSON(values: nbformat.IAttachments) {
     this.clear();
     Object.keys(values).forEach(key => {
-      this.set(key, values[key]);
+      if (values[key] !== undefined) {
+        this.set(key, values[key]!);
+      }
     });
   }
 
@@ -261,9 +278,9 @@ export class AttachmentsModel implements IAttachmentsModel {
    * Serialize the model to JSON.
    */
   toJSON(): nbformat.IAttachments {
-    let ret: nbformat.IAttachments = {};
-    for (let key of this._map.keys()) {
-      ret[key] = this._map.get(key).toJSON();
+    const ret: nbformat.IAttachments = {};
+    for (const key of this._map.keys()) {
+      ret[key] = this._map.get(key)!.toJSON();
     }
     return ret;
   }
@@ -272,8 +289,8 @@ export class AttachmentsModel implements IAttachmentsModel {
    * Create an attachment item and hook up its signals.
    */
   private _createItem(options: IAttachmentModel.IOptions): IAttachmentModel {
-    let factory = this.contentFactory;
-    let item = factory.createAttachmentModel(options);
+    const factory = this.contentFactory;
+    const item = factory.createAttachmentModel(options);
     item.changed.connect(this._onGenericChange, this);
     return item;
   }
@@ -320,8 +337,8 @@ export class AttachmentsModel implements IAttachmentsModel {
   private _isDisposed = false;
   private _stateChanged = new Signal<IAttachmentsModel, void>(this);
   private _changed = new Signal<this, IAttachmentsModel.ChangedArgs>(this);
-  private _modelDB: IModelDB = null;
-  private _serialized: IObservableValue = null;
+  private _modelDB: IModelDB | null = null;
+  private _serialized: IObservableValue | null = null;
   private _changeGuard = false;
 }
 
@@ -374,6 +391,9 @@ export class AttachmentsResolver implements IRenderMime.IResolver {
 
   /**
    * Get the download url of a given absolute server path.
+   *
+   * #### Notes
+   * The returned URL may include a query parameter.
    */
   getDownloadUrl(path: string): Promise<string> {
     if (this._parent && !path.startsWith('attachment:')) {
@@ -381,14 +401,18 @@ export class AttachmentsResolver implements IRenderMime.IResolver {
     }
     // Return a data URL with the data of the url
     const key = path.slice('attachment:'.length);
-    if (!this._model.has(key)) {
+    const attachment = this._model.get(key);
+    if (attachment === undefined) {
       // Resolve with unprocessed path, to show as broken image
       return Promise.resolve(path);
     }
-    const { data } = this._model.get(key);
+    const { data } = attachment;
     const mimeType = Object.keys(data)[0];
     // Only support known safe types:
-    if (imageRendererFactory.mimeTypes.indexOf(mimeType) === -1) {
+    if (
+      mimeType === undefined ||
+      imageRendererFactory.mimeTypes.indexOf(mimeType) === -1
+    ) {
       return Promise.reject(
         `Cannot render unknown image mime type "${mimeType}".`
       );
@@ -403,7 +427,7 @@ export class AttachmentsResolver implements IRenderMime.IResolver {
    */
   isLocal(url: string): boolean {
     if (this._parent && !url.startsWith('attachment:')) {
-      return this._parent.isLocal(url);
+      return this._parent.isLocal?.(url) ?? true;
     }
     return true;
   }

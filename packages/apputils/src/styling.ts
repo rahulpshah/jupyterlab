@@ -1,6 +1,8 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
+import { caretDownEmptyIcon } from '@jupyterlab/ui-components';
+
 /**
  * A namespace for node styling.
  */
@@ -39,9 +41,9 @@ export namespace Styling {
     if (node.localName === 'select') {
       wrapSelect(node as HTMLSelectElement);
     }
-    let nodes = node.getElementsByTagName(tagName);
+    const nodes = node.getElementsByTagName(tagName);
     for (let i = 0; i < nodes.length; i++) {
-      let child = nodes[i];
+      const child = nodes[i];
       child.classList.add('jp-mod-styled');
       if (className) {
         child.classList.add(className);
@@ -56,7 +58,7 @@ export namespace Styling {
    * Wrap a select node.
    */
   export function wrapSelect(node: HTMLSelectElement): HTMLElement {
-    let wrapper = document.createElement('div');
+    const wrapper = document.createElement('div');
     wrapper.classList.add('jp-select-wrapper');
     node.addEventListener('focus', Private.onFocus);
     node.addEventListener('blur', Private.onFocus);
@@ -65,6 +67,18 @@ export namespace Styling {
       node.parentElement.replaceChild(wrapper, node);
     }
     wrapper.appendChild(node);
+
+    // add the icon node
+    wrapper.appendChild(
+      caretDownEmptyIcon.element({
+        tag: 'span',
+        stylesheet: 'select',
+        right: '8px',
+        top: '5px',
+        width: '18px'
+      })
+    );
+
     return wrapper;
   }
 }
@@ -77,8 +91,8 @@ namespace Private {
    * Handle a focus event on a styled select.
    */
   export function onFocus(event: FocusEvent): void {
-    let target = event.target as Element;
-    let parent = target.parentElement;
+    const target = event.target as Element;
+    const parent = target.parentElement;
     if (!parent) {
       return;
     }

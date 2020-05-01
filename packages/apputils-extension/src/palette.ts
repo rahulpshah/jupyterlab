@@ -1,18 +1,16 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
-import { find } from '@phosphor/algorithm';
-
-import { CommandRegistry } from '@phosphor/commands';
-import { DisposableDelegate, IDisposable } from '@phosphor/disposable';
-
-import { CommandPalette } from '@phosphor/widgets';
+import { find } from '@lumino/algorithm';
+import { CommandRegistry } from '@lumino/commands';
+import { DisposableDelegate, IDisposable } from '@lumino/disposable';
+import { CommandPalette } from '@lumino/widgets';
 
 import { ILayoutRestorer, JupyterFrontEnd } from '@jupyterlab/application';
-
 import { ICommandPalette, IPaletteItem } from '@jupyterlab/apputils';
+import { CommandPaletteSvg, paletteIcon } from '@jupyterlab/ui-components';
 
 /**
  * The command IDs used by the apputils extension.
@@ -31,7 +29,6 @@ export class Palette implements ICommandPalette {
    */
   constructor(palette: CommandPalette) {
     this._palette = palette;
-    this._palette.title.iconClass = 'jp-PaletteIcon jp-SideBar-tabIcon';
     this._palette.title.label = '';
     this._palette.title.caption = 'Command Palette';
   }
@@ -61,7 +58,7 @@ export class Palette implements ICommandPalette {
    * @returns A disposable that will remove the item from the palette.
    */
   addItem(options: IPaletteItem): IDisposable {
-    let item = this._palette.addItem(options as CommandPalette.IItemOptions);
+    const item = this._palette.addItem(options as CommandPalette.IItemOptions);
     return new DisposableDelegate(() => {
       this._palette.removeItem(item);
     });
@@ -143,8 +140,13 @@ namespace Private {
    */
   export function createPalette(app: JupyterFrontEnd): CommandPalette {
     if (!palette) {
-      palette = new CommandPalette({ commands: app.commands });
+      // use a renderer tweaked to use inline svg icons
+      palette = new CommandPalette({
+        commands: app.commands,
+        renderer: CommandPaletteSvg.defaultRenderer
+      });
       palette.id = 'command-palette';
+      palette.title.icon = paletteIcon;
       palette.title.label = 'Commands';
     }
 

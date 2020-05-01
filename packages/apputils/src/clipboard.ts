@@ -1,7 +1,10 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { MimeData } from '@phosphor/coreutils';
+import { MimeData } from '@lumino/coreutils';
+
+// 'string' is allowed so as to make it non-breaking for any 1.x releases
+export type ClipboardData = string | MimeData;
 
 /**
  * The clipboard interface.
@@ -27,11 +30,17 @@ export namespace Clipboard {
    * #### Notes
    * This can only be called in response to a user input event.
    */
-  export function copyToSystem(text: string): void {
-    let node = document.body;
-    let handler = (event: ClipboardEvent) => {
-      let data = event.clipboardData || (window as any).clipboardData;
-      data.setData('text', text);
+  export function copyToSystem(clipboardData: ClipboardData): void {
+    const node = document.body;
+    const handler = (event: ClipboardEvent) => {
+      const data = event.clipboardData || (window as any).clipboardData;
+      if (typeof clipboardData === 'string') {
+        data.setData('text', clipboardData);
+      } else {
+        (clipboardData as MimeData).types().map((mimeType: string) => {
+          data.setData(mimeType, clipboardData.getData(mimeType));
+        });
+      }
       event.preventDefault();
       node.removeEventListener('copy', handler);
     };
@@ -60,25 +69,29 @@ export namespace Clipboard {
     let sel = window.getSelection();
 
     // Save the current selection.
-    let savedRanges: any[] = [];
-    for (let i = 0, len = sel.rangeCount; i < len; ++i) {
-      savedRanges[i] = sel.getRangeAt(i).cloneRange();
+    const savedRanges: any[] = [];
+    for (let i = 0, len = sel?.rangeCount || 0; i < len; ++i) {
+      savedRanges[i] = sel!.getRangeAt(i).cloneRange();
     }
 
     // Select the node content.
-    let range = document.createRange();
+    const range = document.createRange();
     range.selectNodeContents(node);
-    sel.removeAllRanges();
-    sel.addRange(range);
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
 
     // Execute the command.
     document.execCommand(type);
 
     // Restore the previous selection.
     sel = window.getSelection();
-    sel.removeAllRanges();
-    for (let i = 0, len = savedRanges.length; i < len; ++i) {
-      sel.addRange(savedRanges[i]);
+    if (sel) {
+      sel.removeAllRanges();
+      for (let i = 0, len = savedRanges.length; i < len; ++i) {
+        sel.addRange(savedRanges[i]);
+      }
     }
   }
 }

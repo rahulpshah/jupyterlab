@@ -1,28 +1,25 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { ArrayExt } from '@phosphor/algorithm';
+import { ArrayExt } from '@lumino/algorithm';
 
-import { Message } from '@phosphor/messaging';
+import { Message } from '@lumino/messaging';
 
-import { IDragEvent } from '@phosphor/dragdrop';
+import { ElementExt } from '@lumino/domutils';
 
-import { ElementExt } from '@phosphor/domutils';
+import { IDragEvent } from '@lumino/dragdrop';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import { DOMUtils, showErrorMessage } from '@jupyterlab/apputils';
 
-import { PathExt } from '@jupyterlab/coreutils';
+import { PageConfig, PathExt } from '@jupyterlab/coreutils';
 
 import { renameFile } from '@jupyterlab/docmanager';
 
-import { FileBrowserModel } from './model';
+import { ellipsesIcon, folderIcon } from '@jupyterlab/ui-components';
 
-/**
- * The class name added to material icons
- */
-const MATERIAL_CLASS = 'jp-MaterialIcon';
+import { FileBrowserModel } from './model';
 
 /**
  * The class name added to the breadcrumb node.
@@ -30,14 +27,9 @@ const MATERIAL_CLASS = 'jp-MaterialIcon';
 const BREADCRUMB_CLASS = 'jp-BreadCrumbs';
 
 /**
- * The class name added to add the home icon for the breadcrumbs
+ * The class name for the breadcrumbs home node
  */
-const BREADCRUMB_HOME = 'jp-HomeIcon';
-
-/**
- * The class named associated to the ellipses icon
- */
-const BREADCRUMB_ELLIPSES = 'jp-EllipsesIcon';
+const BREADCRUMB_HOME_CLASS = 'jp-BreadCrumbs-home';
 
 /**
  * The class name added to the breadcrumb node.
@@ -93,16 +85,16 @@ export class BreadCrumbs extends Widget {
       case 'click':
         this._evtClick(event as MouseEvent);
         break;
-      case 'p-dragenter':
+      case 'lm-dragenter':
         this._evtDragEnter(event as IDragEvent);
         break;
-      case 'p-dragleave':
+      case 'lm-dragleave':
         this._evtDragLeave(event as IDragEvent);
         break;
-      case 'p-dragover':
+      case 'lm-dragover':
         this._evtDragOver(event as IDragEvent);
         break;
-      case 'p-drop':
+      case 'lm-drop':
         this._evtDrop(event as IDragEvent);
         break;
       default:
@@ -116,12 +108,12 @@ export class BreadCrumbs extends Widget {
   protected onAfterAttach(msg: Message): void {
     super.onAfterAttach(msg);
     this.update();
-    let node = this.node;
+    const node = this.node;
     node.addEventListener('click', this);
-    node.addEventListener('p-dragenter', this);
-    node.addEventListener('p-dragleave', this);
-    node.addEventListener('p-dragover', this);
-    node.addEventListener('p-drop', this);
+    node.addEventListener('lm-dragenter', this);
+    node.addEventListener('lm-dragleave', this);
+    node.addEventListener('lm-dragover', this);
+    node.addEventListener('lm-drop', this);
   }
 
   /**
@@ -129,12 +121,12 @@ export class BreadCrumbs extends Widget {
    */
   protected onBeforeDetach(msg: Message): void {
     super.onBeforeDetach(msg);
-    let node = this.node;
+    const node = this.node;
     node.removeEventListener('click', this);
-    node.removeEventListener('p-dragenter', this);
-    node.removeEventListener('p-dragleave', this);
-    node.removeEventListener('p-dragover', this);
-    node.removeEventListener('p-drop', this);
+    node.removeEventListener('lm-dragenter', this);
+    node.removeEventListener('lm-dragleave', this);
+    node.removeEventListener('lm-dragover', this);
+    node.removeEventListener('lm-drop', this);
   }
 
   /**
@@ -159,8 +151,11 @@ export class BreadCrumbs extends Widget {
     // Find a valid click target.
     let node = event.target as HTMLElement;
     while (node && node !== this.node) {
-      if (node.classList.contains(BREADCRUMB_ITEM_CLASS)) {
-        let index = ArrayExt.findFirstIndex(
+      if (
+        node.classList.contains(BREADCRUMB_ITEM_CLASS) ||
+        node.classList.contains(BREADCRUMB_HOME_CLASS)
+      ) {
+        const index = ArrayExt.findFirstIndex(
           this._crumbs,
           value => value === node
         );
@@ -178,11 +173,11 @@ export class BreadCrumbs extends Widget {
   }
 
   /**
-   * Handle the `'p-dragenter'` event for the widget.
+   * Handle the `'lm-dragenter'` event for the widget.
    */
   private _evtDragEnter(event: IDragEvent): void {
     if (event.mimeData.hasData(CONTENTS_MIME)) {
-      let index = ArrayExt.findFirstIndex(this._crumbs, node =>
+      const index = ArrayExt.findFirstIndex(this._crumbs, node =>
         ElementExt.hitTest(node, event.clientX, event.clientY)
       );
       if (index !== -1) {
@@ -196,29 +191,29 @@ export class BreadCrumbs extends Widget {
   }
 
   /**
-   * Handle the `'p-dragleave'` event for the widget.
+   * Handle the `'lm-dragleave'` event for the widget.
    */
   private _evtDragLeave(event: IDragEvent): void {
     event.preventDefault();
     event.stopPropagation();
-    let dropTarget = DOMUtils.findElement(this.node, DROP_TARGET_CLASS);
+    const dropTarget = DOMUtils.findElement(this.node, DROP_TARGET_CLASS);
     if (dropTarget) {
       dropTarget.classList.remove(DROP_TARGET_CLASS);
     }
   }
 
   /**
-   * Handle the `'p-dragover'` event for the widget.
+   * Handle the `'lm-dragover'` event for the widget.
    */
   private _evtDragOver(event: IDragEvent): void {
     event.preventDefault();
     event.stopPropagation();
     event.dropAction = event.proposedAction;
-    let dropTarget = DOMUtils.findElement(this.node, DROP_TARGET_CLASS);
+    const dropTarget = DOMUtils.findElement(this.node, DROP_TARGET_CLASS);
     if (dropTarget) {
       dropTarget.classList.remove(DROP_TARGET_CLASS);
     }
-    let index = ArrayExt.findFirstIndex(this._crumbs, node =>
+    const index = ArrayExt.findFirstIndex(this._crumbs, node =>
       ElementExt.hitTest(node, event.clientX, event.clientY)
     );
     if (index !== -1) {
@@ -227,7 +222,7 @@ export class BreadCrumbs extends Widget {
   }
 
   /**
-   * Handle the `'p-drop'` event for the widget.
+   * Handle the `'lm-drop'` event for the widget.
    */
   private _evtDrop(event: IDragEvent): void {
     event.preventDefault();
@@ -251,7 +246,10 @@ export class BreadCrumbs extends Widget {
     }
 
     // Get the path based on the target node.
-    let index = ArrayExt.findFirstIndex(this._crumbs, node => node === target);
+    const index = ArrayExt.findFirstIndex(
+      this._crumbs,
+      node => node === target
+    );
     if (index === -1) {
       return;
     }
@@ -261,12 +259,12 @@ export class BreadCrumbs extends Widget {
     const manager = model.manager;
 
     // Move all of the items.
-    let promises: Promise<any>[] = [];
-    let oldPaths = event.mimeData.getData(CONTENTS_MIME) as string[];
-    for (let oldPath of oldPaths) {
-      let localOldPath = manager.services.contents.localPath(oldPath);
-      let name = PathExt.basename(localOldPath);
-      let newPath = PathExt.join(path, name);
+    const promises: Promise<any>[] = [];
+    const oldPaths = event.mimeData.getData(CONTENTS_MIME) as string[];
+    for (const oldPath of oldPaths) {
+      const localOldPath = manager.services.contents.localPath(oldPath);
+      const name = PathExt.basename(localOldPath);
+      const newPath = PathExt.join(path, name);
       promises.push(renameFile(manager, oldPath, newPath));
     }
     void Promise.all(promises).catch(err => {
@@ -316,34 +314,35 @@ namespace Private {
     separators: ReadonlyArray<HTMLElement>,
     path: string
   ) {
-    let node = breadcrumbs[0].parentNode as HTMLElement;
+    const node = breadcrumbs[0].parentNode as HTMLElement;
 
     // Remove all but the home node.
-    let firstChild = node.firstChild as HTMLElement;
+    const firstChild = node.firstChild as HTMLElement;
     while (firstChild && firstChild.nextSibling) {
       node.removeChild(firstChild.nextSibling);
     }
+    node.appendChild(separators[0]);
 
-    let parts = path.split('/');
+    const parts = path.split('/');
     if (parts.length > 2) {
-      node.appendChild(separators[0]);
       node.appendChild(breadcrumbs[Crumb.Ellipsis]);
-      let grandParent = parts.slice(0, parts.length - 2).join('/');
+      const grandParent = parts.slice(0, parts.length - 2).join('/');
       breadcrumbs[Crumb.Ellipsis].title = grandParent;
+      node.appendChild(separators[1]);
     }
 
     if (path) {
       if (parts.length >= 2) {
-        node.appendChild(separators[1]);
         breadcrumbs[Crumb.Parent].textContent = parts[parts.length - 2];
         node.appendChild(breadcrumbs[Crumb.Parent]);
-        let parent = parts.slice(0, parts.length - 1).join('/');
+        const parent = parts.slice(0, parts.length - 1).join('/');
         breadcrumbs[Crumb.Parent].title = parent;
+        node.appendChild(separators[2]);
       }
-      node.appendChild(separators[2]);
       breadcrumbs[Crumb.Current].textContent = parts[parts.length - 1];
       node.appendChild(breadcrumbs[Crumb.Current]);
       breadcrumbs[Crumb.Current].title = path;
+      node.appendChild(separators[3]);
     }
   }
 
@@ -351,16 +350,20 @@ namespace Private {
    * Create the breadcrumb nodes.
    */
   export function createCrumbs(): ReadonlyArray<HTMLElement> {
-    let home = document.createElement('span');
-    home.className =
-      MATERIAL_CLASS + ' ' + BREADCRUMB_HOME + ' ' + BREADCRUMB_ITEM_CLASS;
-    home.title = 'Home';
-    let ellipsis = document.createElement('span');
-    ellipsis.className =
-      MATERIAL_CLASS + ' ' + BREADCRUMB_ELLIPSES + ' ' + BREADCRUMB_ITEM_CLASS;
-    let parent = document.createElement('span');
+    const home = folderIcon.element({
+      className: BREADCRUMB_HOME_CLASS,
+      tag: 'span',
+      title: PageConfig.getOption('serverRoot') || 'Jupyter Server Root',
+      stylesheet: 'breadCrumb'
+    });
+    const ellipsis = ellipsesIcon.element({
+      className: BREADCRUMB_ITEM_CLASS,
+      tag: 'span',
+      stylesheet: 'breadCrumb'
+    });
+    const parent = document.createElement('span');
     parent.className = BREADCRUMB_ITEM_CLASS;
-    let current = document.createElement('span');
+    const current = document.createElement('span');
     current.className = BREADCRUMB_ITEM_CLASS;
     return [home, ellipsis, parent, current];
   }
@@ -369,10 +372,15 @@ namespace Private {
    * Create the breadcrumb separator nodes.
    */
   export function createCrumbSeparators(): ReadonlyArray<HTMLElement> {
-    let items: HTMLElement[] = [];
-    for (let i = 0; i < 3; i++) {
-      let item = document.createElement('i');
-      item.className = 'fa fa-angle-right';
+    const items: HTMLElement[] = [];
+    // The maximum number of directories that will be shown in the crumbs
+    const MAX_DIRECTORIES = 2;
+
+    // Make separators for after each directory, one at the beginning, and one
+    // after a possible ellipsis.
+    for (let i = 0; i < MAX_DIRECTORIES + 2; i++) {
+      const item = document.createElement('span');
+      item.textContent = '/';
       items.push(item);
     }
     return items;

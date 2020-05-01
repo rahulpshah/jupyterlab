@@ -1,11 +1,11 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { each, find } from '@phosphor/algorithm';
+import { each, find } from '@lumino/algorithm';
 
-import { IDisposable } from '@phosphor/disposable';
+import { IDisposable } from '@lumino/disposable';
 
-import { Menu, Widget } from '@phosphor/widgets';
+import { Menu, Widget } from '@lumino/widgets';
 
 import {
   ILabShell,
@@ -17,8 +17,6 @@ import {
 import { ICommandPalette, showDialog, Dialog } from '@jupyterlab/apputils';
 
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
-
-import { IInspector } from '@jupyterlab/inspector';
 
 import {
   IMainMenu,
@@ -34,6 +32,8 @@ import {
 } from '@jupyterlab/mainmenu';
 
 import { ServerConnection } from '@jupyterlab/services';
+
+import { jupyterIcon } from '@jupyterlab/ui-components';
 
 /**
  * A namespace for command IDs of semantic extension points.
@@ -70,6 +70,8 @@ export namespace CommandIDs {
   export const restartKernel = 'kernelmenu:restart';
 
   export const restartKernelAndClear = 'kernelmenu:restart-and-clear';
+
+  export const restartAndRunToSelected = 'notebook:restart-and-run-to-selected';
 
   export const changeKernel = 'kernelmenu:change';
 
@@ -116,33 +118,37 @@ export namespace CommandIDs {
  */
 const plugin: JupyterFrontEndPlugin<IMainMenu> = {
   id: '@jupyterlab/mainmenu-extension:plugin',
-  requires: [ICommandPalette, IRouter],
-  optional: [IInspector, ILabShell],
+  requires: [IRouter],
+  optional: [ICommandPalette, ILabShell],
   provides: IMainMenu,
   activate: (
     app: JupyterFrontEnd,
-    palette: ICommandPalette,
     router: IRouter,
-    inspector: IInspector | null,
+    palette: ICommandPalette | null,
     labShell: ILabShell | null
   ): IMainMenu => {
     const { commands } = app;
 
-    let menu = new MainMenu(commands);
+    const menu = new MainMenu(commands);
     menu.id = 'jp-MainMenu';
 
-    let logo = new Widget();
-    logo.addClass('jp-MainAreaPortraitIcon');
-    logo.addClass('jp-JupyterIcon');
+    const logo = new Widget();
+    jupyterIcon.element({
+      container: logo.node,
+      elementPosition: 'center',
+      margin: '2px 2px 2px 8px',
+      height: 'auto',
+      width: '16px'
+    });
     logo.id = 'jp-MainLogo';
 
     // Only add quit button if the back-end supports it by checking page config.
-    let quitButton = PageConfig.getOption('quitButton');
-    menu.fileMenu.quitEntry = quitButton === 'True';
+    const quitButton = PageConfig.getOption('quitButton').toLowerCase();
+    menu.fileMenu.quitEntry = quitButton === 'true';
 
     // Create the application menus.
     createEditMenu(app, menu.editMenu);
-    createFileMenu(app, menu.fileMenu, router, inspector);
+    createFileMenu(app, menu.fileMenu, router);
     createKernelMenu(app, menu.kernelMenu);
     createRunMenu(app, menu.runMenu);
     createSettingsMenu(app, menu.settingsMenu);
@@ -199,27 +205,29 @@ const plugin: JupyterFrontEndPlugin<IMainMenu> = {
       }
     });
 
-    // Add some of the commands defined here to the command palette.
-    if (menu.fileMenu.quitEntry) {
+    if (palette) {
+      // Add some of the commands defined here to the command palette.
+      if (menu.fileMenu.quitEntry) {
+        palette.addItem({
+          command: CommandIDs.shutdown,
+          category: 'Main Area'
+        });
+        palette.addItem({
+          command: CommandIDs.logout,
+          category: 'Main Area'
+        });
+      }
+
       palette.addItem({
-        command: CommandIDs.shutdown,
-        category: 'Main Area'
+        command: CommandIDs.shutdownAllKernels,
+        category: 'Kernel Operations'
       });
+
       palette.addItem({
-        command: CommandIDs.logout,
+        command: CommandIDs.activatePreviouslyUsedTab,
         category: 'Main Area'
       });
     }
-
-    palette.addItem({
-      command: CommandIDs.shutdownAllKernels,
-      category: 'Kernel Operations'
-    });
-
-    palette.addItem({
-      command: CommandIDs.activatePreviouslyUsedTab,
-      category: 'Main Area'
-    });
 
     app.shell.add(logo, 'top');
     app.shell.add(menu, 'top');
@@ -292,12 +300,14 @@ export function createEditMenu(app: JupyterFrontEnd, menu: EditMenu): void {
 export function createFileMenu(
   app: JupyterFrontEnd,
   menu: FileMenu,
-  router: IRouter,
-  inspector: IInspector | null
+  router: IRouter
 ): void {
   const commands = menu.menu.commands;
 
   // Add a delegator command for closing and cleaning up an activity.
+  // This one is a bit different, in that we consider it enabled
+  // even if it cannot find a delegate for the activity.
+  // In that case, we instead call the application `close` command.
   commands.addCommand(CommandIDs.closeAndCleanup, {
     label: () => {
       const action = Private.delegateLabel(
@@ -308,16 +318,22 @@ export function createFileMenu(
       const name = Private.delegateLabel(app, menu.closeAndCleaners, 'name');
       return `Close and ${action ? ` ${action} ${name}` : 'Shutdown'}`;
     },
-    isEnabled: Private.delegateEnabled(
-      app,
-      menu.closeAndCleaners,
-      'closeAndCleanup'
-    ),
-    execute: Private.delegateExecute(
-      app,
-      menu.closeAndCleaners,
-      'closeAndCleanup'
-    )
+    isEnabled: () =>
+      !!app.shell.currentWidget && !!app.shell.currentWidget.title.closable,
+    execute: () => {
+      // Check if we have a registered delegate. If so, call that.
+      if (
+        Private.delegateEnabled(app, menu.closeAndCleaners, 'closeAndCleanup')()
+      ) {
+        return Private.delegateExecute(
+          app,
+          menu.closeAndCleaners,
+          'closeAndCleanup'
+        )();
+      }
+      // If we have no delegate, call the top-level application close.
+      return app.commands.execute('application:close');
+    }
   });
 
   // Add a delegator command for creating a console for an activity.
@@ -348,8 +364,8 @@ export function createFileMenu(
         ]
       }).then(result => {
         if (result.button.accept) {
-          let setting = ServerConnection.makeSettings();
-          let apiURL = URLExt.join(setting.baseUrl, 'api/shutdown');
+          const setting = ServerConnection.makeSettings();
+          const apiURL = URLExt.join(setting.baseUrl, 'api/shutdown');
           return ServerConnection.makeRequest(
             apiURL,
             { method: 'POST' },
@@ -358,9 +374,16 @@ export function createFileMenu(
             .then(result => {
               if (result.ok) {
                 // Close this window if the shutdown request has been successful
-                let body = document.createElement('div');
-                body.innerHTML = `<p>You have shut down the Jupyter server. You can now close this tab.</p>
-                  <p>To use JupyterLab again, you will need to relaunch it.</p>`;
+                const body = document.createElement('div');
+                const p1 = document.createElement('p');
+                p1.textContent =
+                  'You have shut down the Jupyter server. You can now close this tab.';
+                const p2 = document.createElement('p');
+                p2.textContent =
+                  'To use JupyterLab again, you will need to relaunch it.';
+
+                body.appendChild(p1);
+                body.appendChild(p2);
                 void showDialog({
                   title: 'Server stopped',
                   body: new Widget({ node: body }),
@@ -393,11 +416,11 @@ export function createFileMenu(
     { command: 'filebrowser:create-main-launcher' }
   ];
 
+  const openGroup = [{ command: 'filebrowser:open-path' }];
+
   const newViewGroup = [
     { command: 'docmanager:clone' },
-    { command: CommandIDs.createConsole },
-    inspector ? { command: 'inspector:open' } : null,
-    { command: 'docmanager:open-direct' }
+    { command: CommandIDs.createConsole }
   ].filter(item => !!item);
 
   // Add the close group
@@ -435,10 +458,11 @@ export function createFileMenu(
   const printGroup = [{ command: 'apputils:print' }];
 
   menu.addGroup(newGroup, 0);
-  menu.addGroup(newViewGroup, 1);
-  menu.addGroup(closeGroup, 2);
-  menu.addGroup(saveGroup, 3);
-  menu.addGroup(reGroup, 4);
+  menu.addGroup(openGroup, 1);
+  menu.addGroup(newViewGroup, 2);
+  menu.addGroup(closeGroup, 3);
+  menu.addGroup(saveGroup, 4);
+  menu.addGroup(reGroup, 5);
   menu.addGroup(printGroup, 98);
   if (menu.quitEntry) {
     menu.addGroup(quitGroup, 99);
@@ -512,7 +536,7 @@ export function createKernelMenu(app: JupyterFrontEnd, menu: KernelMenu): void {
         body: 'Shut down all kernels?',
         buttons: [
           Dialog.cancelButton(),
-          Dialog.warnButton({ label: 'SHUT DOWN ALL' })
+          Dialog.warnButton({ label: 'Shut Down All' })
         ]
       }).then(result => {
         if (result.button.accept) {
@@ -525,6 +549,7 @@ export function createKernelMenu(app: JupyterFrontEnd, menu: KernelMenu): void {
   const restartGroup = [
     CommandIDs.restartKernel,
     CommandIDs.restartKernelAndClear,
+    CommandIDs.restartAndRunToSelected,
     CommandIDs.restartAndRunAll
   ].map(command => {
     return { command };
@@ -710,6 +735,8 @@ export function createTabsMenu(
     [
       { command: 'application:activate-next-tab' },
       { command: 'application:activate-previous-tab' },
+      { command: 'application:activate-next-tab-bar' },
+      { command: 'application:activate-previous-tab-bar' },
       { command: CommandIDs.activatePreviouslyUsedTab }
     ],
     0
@@ -729,7 +756,7 @@ export function createTabsMenu(
     },
     isToggled: args => {
       const id = args['id'] || '';
-      return app.shell.currentWidget && app.shell.currentWidget.id === id;
+      return !!app.shell.currentWidget && app.shell.currentWidget.id === id;
     },
     execute: args => app.shell.activateById((args['id'] as string) || '')
   });
@@ -774,7 +801,7 @@ export function createTabsMenu(
       });
       // Update the ID of the previous active tab if a new tab is selected.
       labShell.currentChanged.connect((_, args) => {
-        let widget = args.oldValue;
+        const widget = args.oldValue;
         if (!widget) {
           return;
         }
@@ -798,7 +825,7 @@ namespace Private {
     it: Iterable<T>,
     predicate: (value: T) => boolean
   ): T | undefined {
-    for (let value of it) {
+    for (const value of it) {
       if (predicate(value)) {
         return value;
       }
@@ -814,8 +841,10 @@ namespace Private {
     s: Set<E>,
     label: keyof E
   ): string {
-    let widget = app.shell.currentWidget;
-    const extender = find(s, value => value.tracker.has(widget));
+    const widget = app.shell.currentWidget;
+    const extender = widget
+      ? find(s, value => value.tracker.has(widget!))
+      : undefined;
     if (!extender) {
       return '';
     }
@@ -835,16 +864,18 @@ namespace Private {
     executor: keyof E
   ): () => Promise<any> {
     return () => {
-      let widget = app.shell.currentWidget;
-      const extender = find(s, value => value.tracker.has(widget));
+      const widget = app.shell.currentWidget;
+      const extender = widget
+        ? find(s, value => value.tracker.has(widget!))
+        : undefined;
       if (!extender) {
         return Promise.resolve(void 0);
       }
       // Coerce the result to be a function. When Typedoc is updated to use
       // Typescript 2.8, we can possibly use conditional types to get Typescript
       // to recognize this is a function.
-      let f = (extender[executor] as any) as (w: Widget) => Promise<any>;
-      return f(widget);
+      const f = (extender[executor] as any) as (w: Widget) => Promise<any>;
+      return f(widget!);
     };
   }
 
@@ -858,12 +889,14 @@ namespace Private {
     executor: keyof E
   ): () => boolean {
     return () => {
-      let widget = app.shell.currentWidget;
-      const extender = find(s, value => value.tracker.has(widget));
+      const widget = app.shell.currentWidget;
+      const extender = widget
+        ? find(s, value => value.tracker.has(widget!))
+        : undefined;
       return (
         !!extender &&
         !!extender[executor] &&
-        (extender.isEnabled ? extender.isEnabled(widget) : true)
+        (extender.isEnabled && widget ? extender.isEnabled(widget) : true)
       );
     };
   }
@@ -878,14 +911,17 @@ namespace Private {
     toggled: keyof E
   ): () => boolean {
     return () => {
-      let widget = app.shell.currentWidget;
-      const extender = find(s, value => value.tracker.has(widget));
+      const widget = app.shell.currentWidget;
+      const extender = widget
+        ? find(s, value => value.tracker.has(widget!))
+        : undefined;
       // Coerce extender[toggled] to be a function. When Typedoc is updated to use
       // Typescript 2.8, we can possibly use conditional types to get Typescript
       // to recognize this is a function.
       return (
         !!extender &&
         !!extender[toggled] &&
+        !!widget &&
         !!((extender[toggled] as any) as (w: Widget) => () => boolean)(widget)
       );
     };

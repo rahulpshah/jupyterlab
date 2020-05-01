@@ -3,7 +3,9 @@
 
 import { IEditorMimeTypeService } from '@jupyterlab/codeeditor';
 
-import { nbformat, PathExt } from '@jupyterlab/coreutils';
+import { PathExt } from '@jupyterlab/coreutils';
+
+import * as nbformat from '@jupyterlab/nbformat';
 
 import { Mode } from './mode';
 
@@ -18,7 +20,7 @@ export class CodeMirrorMimeTypeService implements IEditorMimeTypeService {
    * If a mime type cannot be found returns the defaul mime type `text/plain`, never `null`.
    */
   getMimeTypeByLanguage(info: nbformat.ILanguageInfoMetadata): string {
-    let ext = info.file_extension || '';
+    const ext = info.file_extension || '';
     return Mode.findBest(
       (info.codemirror_mode as any) || {
         mimetype: info.mimetype,
@@ -41,7 +43,7 @@ export class CodeMirrorMimeTypeService implements IEditorMimeTypeService {
     } else if (ext === '.md') {
       return 'text/x-ipythongfm';
     }
-    let mode = Mode.findByFileName(path) || Mode.findBest('');
+    const mode = Mode.findByFileName(path) || Mode.findBest('');
     return mode.mime;
   }
 }

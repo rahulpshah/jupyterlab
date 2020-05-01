@@ -23,6 +23,12 @@
     },
     {
       "path": "../services"
+    },
+    {
+      "path": "../statedb"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

@@ -2,61 +2,77 @@
 // Distributed under the terms of the Modified BSD License.
 import { ISearchProvider, ISearchMatch } from '../index';
 import { CodeMirrorSearchProvider } from './codemirrorsearchprovider';
+import { GenericSearchProvider } from './genericsearchprovider';
 
-import { NotebookPanel } from '@jupyterlab/notebook';
+import { Cell, MarkdownCell, CodeCell } from '@jupyterlab/cells';
 import { CodeMirrorEditor } from '@jupyterlab/codemirror';
-import { Cell, MarkdownCell } from '@jupyterlab/cells';
+import { NotebookPanel } from '@jupyterlab/notebook';
 
-import { Signal, ISignal } from '@phosphor/signaling';
+import { ArrayExt } from '@lumino/algorithm';
+import { Signal, ISignal } from '@lumino/signaling';
+import { Widget } from '@lumino/widgets';
 
 import CodeMirror from 'codemirror';
 
 interface ICellSearchPair {
   cell: Cell;
-  provider: CodeMirrorSearchProvider;
+  provider: CodeMirrorSearchProvider | GenericSearchProvider;
 }
 
-export class NotebookSearchProvider implements ISearchProvider {
+export interface INotebookFilters {
+  /**
+   * Should cell output be searched?
+   */
+  output: boolean;
+}
+
+export class NotebookSearchProvider implements ISearchProvider<NotebookPanel> {
   /**
    * Get an initial query value if applicable so that it can be entered
    * into the search box as an initial query
    *
    * @returns Initial value used to populate the search box.
    */
-  getInitialQuery(searchTarget: NotebookPanel): any {
+  getInitialQuery(searchTarget: NotebookPanel): unknown {
     const activeCell = searchTarget.content.activeCell;
-    const selection = (activeCell.editor as CodeMirrorEditor).doc.getSelection();
+    const selection = (activeCell?.editor as
+      | CodeMirrorEditor
+      | undefined)?.doc.getSelection();
     // if there are newlines, just return empty string
-    return selection.search(/\r?\n|\r/g) === -1 ? selection : '';
+    return selection?.search(/\r?\n|\r/g) === -1 ? selection : '';
   }
 
   /**
-   * Initialize the search using the provided options.  Should update the UI
+   * Initialize the search using the provided options. Should update the UI
    * to highlight all matches and "select" whatever the first match should be.
    *
    * @param query A RegExp to be use to perform the search
    * @param searchTarget The widget to be searched
+   * @param filters Filter parameters to pass to provider
    *
    * @returns A promise that resolves with a list of all matches
    */
   async startQuery(
     query: RegExp,
-    searchTarget: NotebookPanel
+    searchTarget: NotebookPanel,
+    filters: INotebookFilters | undefined
   ): Promise<ISearchMatch[]> {
     this._searchTarget = searchTarget;
     const cells = this._searchTarget.content.widgets;
 
-    this._query = query;
-    // Listen for cell model change to redo the search in case of
-    // new/pasted/deleted cells
-    const cellList = this._searchTarget.model.cells;
-    cellList.changed.connect(this._restartQuery.bind(this), this);
+    this._filters =
+      !filters || Object.entries(filters).length === 0
+        ? { output: true }
+        : filters;
+
+    // hide the current notebook widget to prevent expensive layout re-calculation operations
+    this._searchTarget.hide();
 
     let indexTotal = 0;
     const allMatches: ISearchMatch[] = [];
     // For each cell, create a search provider and collect the matches
 
-    for (let cell of cells) {
+    for (const cell of cells) {
       const cmEditor = cell.editor as CodeMirrorEditor;
       const cmSearchProvider = new CodeMirrorSearchProvider();
       cmSearchProvider.isSubProvider = true;
@@ -87,8 +103,13 @@ export class NotebookSearchProvider implements ISearchProvider {
           // un-render markdown cells with matches
           this._unRenderedMarkdownCells.push(cell);
         } else if (cellShouldReRender) {
+          // was rendered previously, no need to refresh
           cell.rendered = true;
         }
+      }
+      if (matchesFromCell.length !== 0) {
+        cmSearchProvider.refreshOverlay();
+        this._cellsWithMatches.push(cell);
       }
 
       // update the match indices to reflect the whole document index values
@@ -98,19 +119,76 @@ export class NotebookSearchProvider implements ISearchProvider {
       indexTotal += matchesFromCell.length;
 
       // search has been initialized, connect the changed signal
-      cmSearchProvider.changed.connect(this._onCmSearchProviderChanged, this);
+      cmSearchProvider.changed.connect(this._onSearchProviderChanged, this);
 
       allMatches.concat(matchesFromCell);
 
-      this._cmSearchProviders.push({
+      this._searchProviders.push({
         cell: cell,
         provider: cmSearchProvider
       });
+
+      if (cell instanceof CodeCell && this._filters.output) {
+        const outputProivder = new GenericSearchProvider();
+        outputProivder.isSubProvider = true;
+        const matchesFromOutput = await outputProivder.startQuery(
+          query,
+          cell.outputArea
+        );
+        matchesFromOutput.map(match => {
+          match.index = match.index + indexTotal;
+        });
+        indexTotal += matchesFromOutput.length;
+
+        allMatches.concat(matchesFromOutput);
+
+        outputProivder.changed.connect(this._onSearchProviderChanged, this);
+
+        this._searchProviders.push({
+          cell: cell,
+          provider: outputProivder
+        });
+      }
     }
 
-    this._currentMatch = await this._stepNext();
+    // show the widget again, recalculation of layout will matter again
+    // and so that the next step will scroll correctly to the first match
+    this._searchTarget.show();
+
+    this._currentMatch = await this._stepNext(
+      this._updatedCurrentProvider(false)!
+    );
+    this._refreshCurrentCellEditor();
+
+    this._refreshCellsEditorsInBackground(this._cellsWithMatches);
 
     return allMatches;
+  }
+
+  /**
+   * Gradually refresh cells in the background so that the user will not
+   * experience frozen interface, `n` cells at a time.
+   */
+  private _refreshCellsEditorsInBackground(cells: Cell[], n: number = 5) {
+    let i = 0;
+
+    const refreshNextNCells = () => {
+      for (let stop = i + n; i < stop && i < cells.length; i++) {
+        cells[i].editor.refresh();
+      }
+      if (i < cells.length) {
+        window.setTimeout(refreshNextNCells, 0);
+      }
+    };
+    window.setTimeout(refreshNextNCells, 0);
+  }
+
+  /**
+   * Refresh the editor in the cell for the current match.
+   */
+  private _refreshCurrentCellEditor() {
+    const notebook = this._searchTarget!.content;
+    notebook.activeCell!.editor.refresh();
   }
 
   /**
@@ -121,14 +199,17 @@ export class NotebookSearchProvider implements ISearchProvider {
    * begin a new search.
    */
   async endQuery(): Promise<void> {
-    const queriesEnded: Promise<void>[] = [];
-    this._cmSearchProviders.forEach(({ provider }) => {
-      queriesEnded.push(provider.endQuery());
-      provider.changed.disconnect(this._onCmSearchProviderChanged, this);
-    });
-    Signal.disconnectBetween(this._searchTarget.model.cells, this);
+    this._searchTarget!.hide();
 
-    this._cmSearchProviders = [];
+    const queriesEnded: Promise<void>[] = [];
+    this._searchProviders.forEach(({ provider }) => {
+      queriesEnded.push(provider.endQuery());
+      provider.changed.disconnect(this._onSearchProviderChanged, this);
+    });
+    Signal.disconnectBetween(this._searchTarget!.model!.cells, this);
+
+    this._searchProviders = [];
+    this._currentProvider = null;
     this._unRenderedMarkdownCells.forEach((cell: MarkdownCell) => {
       // Guard against the case where markdown cells have been deleted
       if (!cell.isDisposed) {
@@ -137,6 +218,16 @@ export class NotebookSearchProvider implements ISearchProvider {
     });
     this._unRenderedMarkdownCells = [];
     await Promise.all(queriesEnded);
+    this._searchTarget!.show();
+
+    this._refreshCurrentCellEditor();
+    // re-render all non-markdown cells with matches (which were rendered, thus do not need refreshing)
+    this._refreshCellsEditorsInBackground(
+      this._cellsWithMatches.filter(
+        (cell: Cell) => !(cell instanceof MarkdownCell)
+      )
+    );
+    this._cellsWithMatches = [];
   }
 
   /**
@@ -145,26 +236,38 @@ export class NotebookSearchProvider implements ISearchProvider {
    * @returns A promise that resolves when all state has been cleaned up.
    */
   async endSearch(): Promise<void> {
-    Signal.disconnectBetween(this._searchTarget.model.cells, this);
+    this._searchTarget!.hide();
+    Signal.disconnectBetween(this._searchTarget!.model!.cells, this);
 
-    const index = this._searchTarget.content.activeCellIndex;
+    const index = this._searchTarget!.content.activeCellIndex;
     const searchEnded: Promise<void>[] = [];
-    this._cmSearchProviders.forEach(({ provider }) => {
+    this._searchProviders.forEach(({ provider }) => {
       searchEnded.push(provider.endSearch());
-      provider.changed.disconnect(this._onCmSearchProviderChanged, this);
+      provider.changed.disconnect(this._onSearchProviderChanged, this);
     });
 
-    this._cmSearchProviders = [];
+    this._searchProviders = [];
+    this._currentProvider = null;
     this._unRenderedMarkdownCells.forEach((cell: MarkdownCell) => {
       cell.rendered = true;
     });
     this._unRenderedMarkdownCells = [];
 
-    this._searchTarget.content.activeCellIndex = index;
-    this._searchTarget.content.mode = 'edit';
-    this._searchTarget = null;
+    this._searchTarget!.content.activeCellIndex = index;
+    this._searchTarget!.content.mode = 'edit';
     this._currentMatch = null;
     await Promise.all(searchEnded);
+    this._searchTarget!.show();
+    this._refreshCurrentCellEditor();
+    this._searchTarget = null;
+
+    // re-render all non-markdown cells with matches (which were rendered, thus do not need refreshing)
+    this._refreshCellsEditorsInBackground(
+      this._cellsWithMatches.filter(
+        (cell: Cell) => !(cell instanceof MarkdownCell)
+      )
+    );
+    this._cellsWithMatches = [];
   }
 
   /**
@@ -173,7 +276,9 @@ export class NotebookSearchProvider implements ISearchProvider {
    * @returns A promise that resolves once the action has completed.
    */
   async highlightNext(): Promise<ISearchMatch | undefined> {
-    this._currentMatch = await this._stepNext();
+    this._currentMatch = await this._stepNext(
+      this._updatedCurrentProvider(false)!
+    );
     return this._currentMatch;
   }
 
@@ -183,7 +288,10 @@ export class NotebookSearchProvider implements ISearchProvider {
    * @returns A promise that resolves once the action has completed.
    */
   async highlightPrevious(): Promise<ISearchMatch | undefined> {
-    this._currentMatch = await this._stepNext(true);
+    this._currentMatch = await this._stepNext(
+      this._updatedCurrentProvider(true)!,
+      true
+    );
     return this._currentMatch;
   }
 
@@ -193,12 +301,11 @@ export class NotebookSearchProvider implements ISearchProvider {
    * @returns A promise that resolves with a boolean indicating whether a replace occurred.
    */
   async replaceCurrentMatch(newText: string): Promise<boolean> {
-    const notebook = this._searchTarget.content;
-    const editor = notebook.activeCell.editor as CodeMirrorEditor;
+    const notebook = this._searchTarget!.content;
+    const editor = notebook.activeCell!.editor as CodeMirrorEditor;
     let replaceOccurred = false;
     if (this._currentMatchIsSelected(editor)) {
-      const cellIndex = notebook.widgets.indexOf(notebook.activeCell);
-      const { provider } = this._cmSearchProviders[cellIndex];
+      const { provider } = this._currentProvider!;
       replaceOccurred = await provider.replaceCurrentMatch(newText);
       if (replaceOccurred) {
         this._currentMatch = provider.currentMatch;
@@ -220,8 +327,8 @@ export class NotebookSearchProvider implements ISearchProvider {
    */
   async replaceAllMatches(newText: string): Promise<boolean> {
     let replaceOccurred = false;
-    for (let index in this._cmSearchProviders) {
-      const { provider } = this._cmSearchProviders[index];
+    for (const index in this._searchProviders) {
+      const { provider } = this._searchProviders[index];
       const singleReplaceOccurred = await provider.replaceAllMatches(newText);
       replaceOccurred = singleReplaceOccurred ? true : replaceOccurred;
     }
@@ -232,17 +339,17 @@ export class NotebookSearchProvider implements ISearchProvider {
   /**
    * Report whether or not this provider has the ability to search on the given object
    */
-  static canSearchOn(domain: any): boolean {
+  static canSearchOn(domain: Widget): domain is NotebookPanel {
     // check to see if the CMSearchProvider can search on the
     // first cell, false indicates another editor is present
     return domain instanceof NotebookPanel;
   }
 
   /**
-   * The same list of matches provided by the startQuery promise resoluton
+   * The same list of matches provided by the startQuery promise resolution
    */
   get matches(): ISearchMatch[] {
-    return [].concat(...this._getMatchesFromCells());
+    return ([] as ISearchMatch[]).concat(...this._getMatchesFromCells());
   }
 
   /**
@@ -255,7 +362,7 @@ export class NotebookSearchProvider implements ISearchProvider {
   /**
    * The current index of the selected match.
    */
-  get currentMatchIndex(): number {
+  get currentMatchIndex(): number | null {
     if (!this._currentMatch) {
       return null;
     }
@@ -269,59 +376,90 @@ export class NotebookSearchProvider implements ISearchProvider {
    */
   readonly isReadOnly = false;
 
+  readonly hasOutputs = true;
+
+  private _updatedCurrentProvider(reverse: boolean) {
+    if (
+      this._currentProvider &&
+      this._currentProvider.cell === this._searchTarget!.content.activeCell
+    ) {
+      return this._currentProvider;
+    }
+    let provider;
+    if (!this._currentProvider) {
+      const find = reverse ? ArrayExt.findLastValue : ArrayExt.findFirstValue;
+      provider = find(
+        this._searchProviders,
+        provider => this._searchTarget!.content.activeCell === provider.cell
+      );
+    } else {
+      const currentProviderIndex = ArrayExt.firstIndexOf(
+        this._searchProviders,
+        this._currentProvider
+      );
+      const nextProviderIndex =
+        ((reverse ? currentProviderIndex - 1 : currentProviderIndex + 1) +
+          this._searchProviders.length) %
+        this._searchProviders.length;
+      provider = this._searchProviders[nextProviderIndex];
+    }
+    this._currentProvider = provider;
+    return provider;
+  }
+
   private async _stepNext(
+    currentSearchPair: ICellSearchPair,
     reverse = false,
     steps = 0
   ): Promise<ISearchMatch | undefined> {
-    const notebook = this._searchTarget.content;
-    const activeCell: Cell = notebook.activeCell;
-    const cellIndex = notebook.widgets.indexOf(activeCell);
-    const numCells = notebook.widgets.length;
-    const { provider } = this._cmSearchProviders[cellIndex];
+    const { provider } = currentSearchPair;
 
     // highlightNext/Previous will not be able to search rendered MarkdownCells or
     // hidden code cells, but that is okay here because in startQuery, we unrendered
-    // all cells with matches and unhid all cells
+    // all cells with matches and unhide all cells
     const match = reverse
       ? await provider.highlightPrevious()
       : await provider.highlightNext();
     // If there was no match in this cell, try the next cell
     if (!match) {
+      const providerIndex = this._searchProviders.indexOf(currentSearchPair);
+      const numProviders = this._searchProviders.length;
       // We have looped around the whole notebook and have searched the original
       // cell once more and found no matches.  Do not proceed with incrementing the
       // active cell index so that the active cell doesn't change
-      if (steps === numCells) {
+      if (steps === numProviders) {
         return undefined;
       }
-      notebook.activeCellIndex =
-        ((reverse ? cellIndex - 1 : cellIndex + 1) + numCells) % numCells;
-      const editor = notebook.activeCell.editor as CodeMirrorEditor;
-      // move the cursor of the next cell to the start/end of the cell so it can
-      // search the whole thing
-      const newPosCM = reverse
-        ? CodeMirror.Pos(editor.lastLine())
-        : CodeMirror.Pos(editor.firstLine(), 0);
-      const newPos = {
-        line: newPosCM.line,
-        column: newPosCM.ch
-      };
-      editor.setCursorPosition(newPos);
-      return this._stepNext(reverse, steps + 1);
+      const nextIndex =
+        ((reverse ? providerIndex - 1 : providerIndex + 1) + numProviders) %
+        numProviders;
+      const nextSearchPair = this._searchProviders[nextIndex];
+      if (nextSearchPair.provider instanceof CodeMirrorSearchProvider) {
+        const editor = nextSearchPair.provider.editor;
+        // move the cursor of the next cell to the start/end of the cell so it can
+        // search the whole thing (but don't scroll because we haven't found anything yet)
+        const newPosCM = reverse
+          ? CodeMirror.Pos(editor.lastLine())
+          : CodeMirror.Pos(editor.firstLine(), 0);
+        const newPos = {
+          line: newPosCM.line,
+          column: newPosCM.ch
+        };
+        editor.setCursorPosition(newPos, { scroll: false });
+      }
+      this._currentProvider = nextSearchPair;
+      return this._stepNext(nextSearchPair, reverse, steps + 1);
     }
 
+    const notebook = this._searchTarget!.content;
+    notebook.activeCellIndex = notebook.widgets.indexOf(currentSearchPair.cell);
     return match;
-  }
-
-  private async _restartQuery() {
-    await this.endQuery();
-    await this.startQuery(this._query, this._searchTarget);
-    this._changed.emit(undefined);
   }
 
   private _getMatchesFromCells(): ISearchMatch[][] {
     let indexTotal = 0;
     const result: ISearchMatch[][] = [];
-    this._cmSearchProviders.forEach(({ provider }) => {
+    this._searchProviders.forEach(({ provider }) => {
       const cellMatches = provider.matches;
       cellMatches.forEach(match => {
         match.index = match.index + indexTotal;
@@ -332,7 +470,7 @@ export class NotebookSearchProvider implements ISearchProvider {
     return result;
   }
 
-  private _onCmSearchProviderChanged() {
+  private _onSearchProviderChanged() {
     this._changed.emit(undefined);
   }
 
@@ -353,10 +491,12 @@ export class NotebookSearchProvider implements ISearchProvider {
     );
   }
 
-  private _searchTarget: NotebookPanel;
-  private _query: RegExp;
-  private _cmSearchProviders: ICellSearchPair[] = [];
-  private _currentMatch: ISearchMatch;
+  private _searchTarget: NotebookPanel | undefined | null;
+  private _filters: INotebookFilters;
+  private _searchProviders: ICellSearchPair[] = [];
+  private _currentProvider: ICellSearchPair | null | undefined;
+  private _currentMatch: ISearchMatch | undefined | null;
   private _unRenderedMarkdownCells: MarkdownCell[] = [];
+  private _cellsWithMatches: Cell[] = [];
   private _changed = new Signal<this, void>(this);
 }

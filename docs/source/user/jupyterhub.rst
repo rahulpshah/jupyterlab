@@ -1,10 +1,14 @@
-.. _jupyterlab:
+.. _jupyterhub:
 
 JupyterLab on JupyterHub
 ------------------------
 
 JupyterLab works out of the box with JupyterHub, and can even run side by side
 with the classic Notebook.
+
+When JupyterLab is deployed with JupyterHub it will show additional menu
+items in the File menu that allow the user to log out or go to the JupyterHub
+control panel.
 
 Use JupyterLab by Default
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -21,20 +25,8 @@ In this configuration, users can still access the classic Notebook at ``/tree``,
 by either typing that URL into the browser, or by using the "Launch Classic
 Notebook" item in JupyterLab's Help menu.
 
-Further Integration
-~~~~~~~~~~~~~~~~~~~
-
-Additional integration between JupyterLab and JupyterHub is offered by the
-`jupyterlab-hub <https://github.com/jupyterhub/jupyterlab-hub>`__ extension for
-JupyterLab. It provides a Hub menu with items to access the JupyterHub control
-panel or logout of the hub.
-
-To install the ``jupyterlab-hub`` extension, run::
-
-    jupyter labextension install @jupyterlab/hub-extension
-
-Further directions are provided on the `jupyterlab-hub GitHub repository
-<https://github.com/jupyterhub/jupyterlab-hub>`__.
+For this to work, you will need to enable the jupyterlab server 
+extension with ``jupyter serverextension enable jupyterlab``.
 
 Example Configuration
 ~~~~~~~~~~~~~~~~~~~~~

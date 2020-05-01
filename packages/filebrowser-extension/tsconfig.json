@@ -25,10 +25,22 @@
       "path": "../launcher"
     },
     {
+      "path": "../mainmenu"
+    },
+    {
       "path": "../services"
     },
     {
+      "path": "../settingregistry"
+    },
+    {
+      "path": "../statedb"
+    },
+    {
       "path": "../statusbar"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

@@ -6,9 +6,9 @@ import { INotebookModel, Notebook } from '.';
 
 import { Cell } from '@jupyterlab/cells';
 
-import { IconItem } from '@jupyterlab/statusbar';
+import { notTrustedIcon, trustedIcon } from '@jupyterlab/ui-components';
 
-import { toArray } from '@phosphor/algorithm';
+import { toArray } from '@lumino/algorithm';
 
 /**
  * Determine the notebook trust status message.
@@ -18,23 +18,17 @@ function cellTrust(
 ): string[] {
   if (props.trustedCells === props.totalCells) {
     return [
-      `Notebook trusted: ${props.trustedCells} of ${
-        props.totalCells
-      } cells trusted.`,
+      `Notebook trusted: ${props.trustedCells} of ${props.totalCells} cells trusted.`,
       'jp-StatusItem-trusted'
     ];
   } else if (props.activeCellTrusted) {
     return [
-      `Active cell trusted: ${props.trustedCells} of ${
-        props.totalCells
-      } cells trusted. `,
+      `Active cell trusted: ${props.trustedCells} of ${props.totalCells} cells trusted. `,
       'jp-StatusItem-trusted'
     ];
   } else {
     return [
-      `Notebook not trusted: ${props.trustedCells} of ${
-        props.totalCells
-      } cells trusted.`,
+      `Notebook not trusted: ${props.trustedCells} of ${props.totalCells} cells trusted.`,
       'jp-StatusItem-untrusted'
     ];
   }
@@ -50,8 +44,11 @@ function cellTrust(
 function NotebookTrustComponent(
   props: NotebookTrustComponent.IProps
 ): React.ReactElement<NotebookTrustComponent.IProps> {
-  const source = cellTrust(props)[1];
-  return <IconItem source={source} offset={{ x: 0, y: 2 }} />;
+  if (props.allCellsTrusted) {
+    return <trustedIcon.react top={'2px'} stylesheet={'statusBar'} />;
+  } else {
+    return <notTrustedIcon.react top={'2px'} stylesheet={'statusBar'} />;
+  }
 }
 
 /**
@@ -94,8 +91,7 @@ export class NotebookTrustStatus extends VDomRenderer<
    * Construct a new status item.
    */
   constructor() {
-    super();
-    this.model = new NotebookTrustStatus.Model();
+    super(new NotebookTrustStatus.Model());
   }
 
   /**
@@ -226,11 +222,14 @@ export namespace NotebookTrustStatus {
      * Given a notebook model, figure out how many of the cells are trusted.
      */
     private _deriveCellTrustState(
-      model: INotebookModel
+      model: INotebookModel | null
     ): { total: number; trusted: number } {
-      let cells = toArray(model.cells);
+      if (model === null) {
+        return { total: 0, trusted: 0 };
+      }
+      const cells = toArray(model.cells);
 
-      let trusted = cells.reduce((accum, current) => {
+      const trusted = cells.reduce((accum, current) => {
         if (current.trusted) {
           return accum + 1;
         } else {
@@ -238,7 +237,7 @@ export namespace NotebookTrustStatus {
         }
       }, 0);
 
-      let total = cells.length;
+      const total = cells.length;
 
       return {
         total,

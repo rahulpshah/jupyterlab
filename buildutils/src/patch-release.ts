@@ -1,52 +1,65 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
-import * as fs from 'fs-extra';
-import * as path from 'path';
+import commander from 'commander';
 import * as utils from './utils';
 
-// Make sure we have required command line arguments.
-if (process.argv.length < 3) {
-  let msg = '** Must supply a target package';
-  process.stderr.write(msg);
-  process.exit(1);
-}
+// Specify the program signature.
+commander
+  .description('Create a patch release')
+  .option('--force', 'Force the upgrade')
+  .action((options: any) => {
+    // Make sure we can patch release.
+    const pyVersion = utils.getPythonVersion();
+    if (
+      pyVersion.includes('a') ||
+      pyVersion.includes('b') ||
+      pyVersion.includes('rc')
+    ) {
+      throw new Error('Can only make a patch release from a final version');
+    }
 
-// Use npm here so this file can be used outside of JupyterLab.
-utils.run('npm run build:packages');
+    // Run pre-bump actions.
+    utils.prebump();
 
-// Extract the desired package target(s).
-process.argv.slice(2).forEach(target => {
-  let packagePath = path.resolve(path.join('packages', target));
+    // Version the changed
+    let cmd = `lerna version patch -m \"New version\" --no-push`;
+    if (options.force) {
+      cmd += ' --yes';
+    }
+    const oldVersion = utils.run(
+      'git rev-parse HEAD',
+      {
+        stdio: 'pipe',
+        encoding: 'utf8'
+      },
+      true
+    );
+    utils.run(cmd);
+    const newVersion = utils.run(
+      'git rev-parse HEAD',
+      {
+        stdio: 'pipe',
+        encoding: 'utf8'
+      },
+      true
+    );
+    if (oldVersion === newVersion) {
+      console.debug('aborting');
+      // lerna didn't version anything, so we assume the user aborted
+      throw new Error('Lerna aborted');
+    }
 
-  if (!fs.existsSync(packagePath)) {
-    console.log('Invalid package path', packagePath);
-    process.exit(1);
-  }
+    // Patch the python version
+    utils.run('bumpversion patch'); // switches to alpha
+    utils.run('bumpversion release --allow-dirty'); // switches to beta
+    utils.run('bumpversion release --allow-dirty'); // switches to rc.
+    utils.run('bumpversion release --allow-dirty'); // switches to final.
 
-  // Perform the patch operations.
-  console.log('Patching', target, '...');
+    // Run post-bump actions.
+    utils.postbump();
+  });
 
-  utils.run('npm version patch', { cwd: packagePath });
-  utils.run('npm publish', { cwd: packagePath });
-
-  // Extract the new package info.
-  let data = utils.readJSONFile(path.join(packagePath, 'package.json'));
-  let name = data.name;
-  let version = data.version;
-
-  // Make the release commit
-  utils.run('git commit -a -m "Release ' + name + '@' + version + '"');
-  utils.run('git tag ' + name + '@' + version);
-});
-
-// Update the static folder.
-utils.run('npm run build:update');
-
-// Integrity update
-utils.run('npm run integrity');
-utils.run('git commit -a -m "Integrity update"');
-
-console.log('\n\nFinished, make sure to push the commit(s) and tag(s).');
+commander.parse(process.argv);

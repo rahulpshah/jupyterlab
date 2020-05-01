@@ -1,4 +1,4 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
@@ -9,11 +9,11 @@
  * Notebook widgets.
  */
 
-import { each, IterableOrArrayLike } from '@phosphor/algorithm';
+import { each, IterableOrArrayLike } from '@lumino/algorithm';
 import { ICodeCellModel } from './model';
 import { Cell } from './widget';
-import { h, VirtualDOM } from '@phosphor/virtualdom';
-import { nbformat } from '@jupyterlab/coreutils';
+import { h, VirtualDOM } from '@lumino/virtualdom';
+import * as nbformat from '@jupyterlab/nbformat';
 
 /**
  * Constants for drag
@@ -95,7 +95,7 @@ export namespace CellDragUtils {
     cell: Cell,
     target: HTMLElement
   ): ICellTargetArea {
-    let targetArea: ICellTargetArea = null;
+    let targetArea: ICellTargetArea;
     if (cell) {
       if (cell.editorWidget.node.contains(target)) {
         targetArea = 'input';
@@ -125,8 +125,8 @@ export namespace CellDragUtils {
     nextX: number,
     nextY: number
   ): boolean {
-    let dx = Math.abs(nextX - prevX);
-    let dy = Math.abs(nextY - prevY);
+    const dx = Math.abs(nextX - prevX);
+    const dy = Math.abs(nextY - prevY);
     return dx >= DRAG_THRESHOLD || dy >= DRAG_THRESHOLD;
   }
 
@@ -143,7 +143,8 @@ export namespace CellDragUtils {
     const count = selectedCells.length;
     let promptNumber: string;
     if (activeCell.model.type === 'code') {
-      let executionCount = (activeCell.model as ICodeCellModel).executionCount;
+      const executionCount = (activeCell.model as ICodeCellModel)
+        .executionCount;
       promptNumber = ' ';
       if (executionCount) {
         promptNumber = executionCount.toString();

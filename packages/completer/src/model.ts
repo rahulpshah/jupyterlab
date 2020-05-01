@@ -7,14 +7,15 @@ import {
   iter,
   map,
   toArray
-} from '@phosphor/algorithm';
+} from '@lumino/algorithm';
 
-import { JSONExt } from '@phosphor/coreutils';
+import { JSONExt, ReadonlyPartialJSONArray } from '@lumino/coreutils';
 
-import { StringExt } from '@phosphor/algorithm';
+import { StringExt } from '@lumino/algorithm';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
+import { CompletionHandler } from './handler';
 import { Completer } from './widget';
 
 /**
@@ -35,7 +36,7 @@ export class CompleterModel implements Completer.IModel {
     return this._original;
   }
   set original(newValue: Completer.ITextState | null) {
-    let unchanged =
+    const unchanged =
       this._original === newValue ||
       (this._original &&
         newValue &&
@@ -96,12 +97,12 @@ export class CompleterModel implements Completer.IModel {
 
     // If the text change means that the original start point has been preceded,
     // then the completion is no longer valid and should be reset.
-    if (currentLine.length < originalLine.length) {
+    if (!this._subsetMatch && currentLine.length < originalLine.length) {
       this.reset(true);
       return;
     }
 
-    const { start, end } = this._cursor;
+    const { start, end } = cursor;
     // Clip the front of the current line.
     let query = current.text.substring(start);
     // Clip the back of the current line by calculating the end of the original.
@@ -163,6 +164,40 @@ export class CompleterModel implements Completer.IModel {
     }
     this._isDisposed = true;
     Signal.clearData(this);
+  }
+
+  /**
+   * The list of visible items in the completer menu.
+   *
+   * #### Notes
+   * This is a read-only property.
+   */
+  completionItems?(): CompletionHandler.ICompletionItems {
+    let query = this._query;
+    if (query) {
+      return this._markup(query);
+    }
+    return this._completionItems;
+  }
+
+  /**
+   * Set the list of visible items in the completer menu, and append any
+   * new types to KNOWN_TYPES.
+   */
+  setCompletionItems?(newValue: CompletionHandler.ICompletionItems): void {
+    if (
+      JSONExt.deepEqual(
+        (newValue as unknown) as ReadonlyPartialJSONArray,
+        (this._completionItems as unknown) as ReadonlyPartialJSONArray
+      )
+    ) {
+      return;
+    }
+    this._completionItems = newValue;
+    this._orderedTypes = Private.findOrderedCompletionItemTypes(
+      this._completionItems
+    );
+    this._stateChanged.emit(undefined);
   }
 
   /**
@@ -301,13 +336,6 @@ export class CompleterModel implements Completer.IModel {
       return;
     }
 
-    // When the completer detects a common subset prefix for all options,
-    // it updates the model and sets the model source to that value, but this
-    // text change should be ignored.
-    if (this._subsetMatch) {
-      return;
-    }
-
     const { text, column, line } = change;
     const last = text.split('\n')[line][column - 1];
 
@@ -319,7 +347,7 @@ export class CompleterModel implements Completer.IModel {
     }
 
     // If final character is whitespace, reset completion.
-    this.reset(true);
+    this.reset(false);
   }
 
   /**
@@ -332,17 +360,18 @@ export class CompleterModel implements Completer.IModel {
   createPatch(patch: string): Completer.IPatch | undefined {
     const original = this._original;
     const cursor = this._cursor;
+    const current = this._current;
 
-    if (!original || !cursor) {
+    if (!original || !cursor || !current) {
       return undefined;
     }
 
-    const { start, end } = cursor;
-    const { text } = original;
-    const prefix = text.substring(0, start);
-    const suffix = text.substring(end);
+    let { start, end } = cursor;
+    // Also include any filtering/additional-typing that has occurred
+    // since the completion request in the patched length.
+    end = end + (current.text.length - original.text.length);
 
-    return { offset: (prefix + patch).length, text: prefix + patch + suffix };
+    return { start, end, value: patch };
   }
 
   /**
@@ -362,19 +391,57 @@ export class CompleterModel implements Completer.IModel {
   }
 
   /**
+   * Check if CompletionItem matches against query.
+   * Highlight matching prefix by adding <mark> tags.
+   */
+  private _markup(query: string): CompletionHandler.ICompletionItems {
+    const items = this._completionItems;
+    let results: CompletionHandler.ICompletionItem[] = [];
+    for (let item of items) {
+      // See if label matches query string
+      // With ICompletionItems, the label may include parameters, so we exclude them from the matcher.
+      // e.g. Given label `foo(b, a, r)` and query `bar`,
+      // don't count parameters, `b`, `a`, and `r` as matches.
+      const index = item.label.indexOf('(');
+      const prefix = index > -1 ? item.label.substring(0, index) : item.label;
+      let match = StringExt.matchSumOfSquares(prefix, query);
+      // Filter non-matching items.
+      if (match) {
+        // Highlight label text if there's a match
+        let marked = StringExt.highlight(
+          item.label,
+          match.indices,
+          Private.mark
+        );
+        results.push({
+          label: marked.join(''),
+          // If no insertText is present, preserve original label value
+          // by setting it as the insertText.
+          insertText: item.insertText ? item.insertText : item.label,
+          type: item.type,
+          icon: item.icon,
+          documentation: item.documentation,
+          deprecated: item.deprecated
+        });
+      }
+    }
+    return results;
+  }
+
+  /**
    * Apply the query to the complete options list to return the matching subset.
    */
   private _filter(): IIterator<Completer.IItem> {
-    let options = this._options || [];
-    let query = this._query;
+    const options = this._options || [];
+    const query = this._query;
     if (!query) {
       return map(options, option => ({ raw: option, text: option }));
     }
-    let results: Private.IMatch[] = [];
-    for (let option of options) {
-      let match = StringExt.matchSumOfSquares(option, query);
+    const results: Private.IMatch[] = [];
+    for (const option of options) {
+      const match = StringExt.matchSumOfSquares(option, query);
       if (match) {
-        let marked = StringExt.highlight(option, match.indices, Private.mark);
+        const marked = StringExt.highlight(option, match.indices, Private.mark);
         results.push({
           raw: option,
           score: match.score,
@@ -394,6 +461,7 @@ export class CompleterModel implements Completer.IModel {
   private _reset(): void {
     this._current = null;
     this._cursor = null;
+    this._completionItems = [];
     this._options = [];
     this._original = null;
     this._query = '';
@@ -405,6 +473,7 @@ export class CompleterModel implements Completer.IModel {
   private _current: Completer.ITextState | null = null;
   private _cursor: Completer.ICursorSpan | null = null;
   private _isDisposed = false;
+  private _completionItems: CompletionHandler.ICompletionItems = [];
   private _options: string[] = [];
   private _original: Completer.ITextState | null = null;
   private _query = '';
@@ -426,13 +495,10 @@ namespace Private {
   /**
    * The map of known type annotations of completer matches.
    */
-  const KNOWN_MAP = KNOWN_TYPES.reduce(
-    (acc, type) => {
-      acc[type] = null;
-      return acc;
-    },
-    {} as Completer.TypeMap
-  );
+  const KNOWN_MAP = KNOWN_TYPES.reduce((acc, type) => {
+    acc[type] = null;
+    return acc;
+  }, {} as Completer.TypeMap);
 
   /**
    * A filtered completion menu matching result.
@@ -471,11 +537,40 @@ namespace Private {
    * by locale order of the item text.
    */
   export function scoreCmp(a: IMatch, b: IMatch): number {
-    let delta = a.score - b.score;
+    const delta = a.score - b.score;
     if (delta !== 0) {
       return delta;
     }
     return a.raw.localeCompare(b.raw);
+  }
+
+  /**
+   * Compute a reliably ordered list of types for ICompletionItems.
+   *
+   * #### Notes
+   * The resulting list always begins with the known types:
+   * ```
+   * ['function', 'instance', 'class', 'module', 'keyword']
+   * ```
+   * followed by other types in alphabetical order.
+   *
+   */
+  export function findOrderedCompletionItemTypes(
+    items: CompletionHandler.ICompletionItems
+  ): string[] {
+    const newTypeSet = new Set<string>();
+    items.forEach(item => {
+      if (
+        item.type &&
+        !KNOWN_TYPES.includes(item.type) &&
+        !newTypeSet.has(item.type!)
+      ) {
+        newTypeSet.add(item.type!);
+      }
+    });
+    const newTypes = Array.from(newTypeSet);
+    newTypes.sort((a, b) => a.localeCompare(b));
+    return KNOWN_TYPES.concat(newTypes);
   }
 
   /**
@@ -491,7 +586,10 @@ namespace Private {
   export function findOrderedTypes(typeMap: Completer.TypeMap): string[] {
     const filtered = Object.keys(typeMap)
       .map(key => typeMap[key])
-      .filter(value => value && !(value in KNOWN_MAP))
+      .filter(
+        (value: string | null): value is string =>
+          !!value && !(value in KNOWN_MAP)
+      )
       .sort((a, b) => a.localeCompare(b));
 
     return KNOWN_TYPES.concat(filtered);

@@ -5,13 +5,13 @@ import { URLExt, PathExt } from '@jupyterlab/coreutils';
 
 import { ModelDB } from '@jupyterlab/observables';
 
-import { JSONObject } from '@phosphor/coreutils';
+import { PartialJSONObject } from '@lumino/coreutils';
 
-import { each } from '@phosphor/algorithm';
+import { each } from '@lumino/algorithm';
 
-import { IDisposable } from '@phosphor/disposable';
+import { IDisposable } from '@lumino/disposable';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
 import { ServerConnection } from '..';
 
@@ -96,6 +96,11 @@ export namespace Contents {
      * Only relevant for type: 'file'
      */
     readonly format: FileFormat;
+
+    /**
+     * The size of then file in bytes.
+     */
+    readonly size?: number;
   }
 
   /**
@@ -232,6 +237,17 @@ export namespace Contents {
     localPath(path: string): string;
 
     /**
+     * Normalize a global path. Reduces '..' and '.' parts, and removes
+     * leading slashes from the local part of the path, while retaining
+     * the drive name if it exists.
+     *
+     * @param path: the path.
+     *
+     * @returns The normalized path.
+     */
+    normalize(path: string): string;
+
+    /**
      * Given a path of the form `drive:local/portion/of/it.txt`
      * get the name of the drive. If the path is missing
      * a drive portion, returns an empty string.
@@ -265,6 +281,9 @@ export namespace Contents {
      *
      * @param A promise which resolves with the absolute POSIX
      *   file path on the server.
+     *
+     * #### Notes
+     * The returned URL may include a query parameter.
      */
     getDownloadUrl(path: string): Promise<string>;
 
@@ -409,6 +428,9 @@ export namespace Contents {
      *
      * @param A promise which resolves with the absolute POSIX
      *   file path on the server.
+     *
+     * #### Notes
+     * The returned URL may include a query parameter.
      */
     getDownloadUrl(localPath: string): Promise<string>;
 
@@ -526,9 +548,9 @@ export class ContentsManager implements Contents.IManager {
    * @param options - The options used to initialize the object.
    */
   constructor(options: ContentsManager.IOptions = {}) {
-    let serverSettings = (this.serverSettings =
-      options.serverSettings || ServerConnection.makeSettings());
-    this._defaultDrive = options.defaultDrive || new Drive({ serverSettings });
+    const serverSettings = (this.serverSettings =
+      options.serverSettings ?? ServerConnection.makeSettings());
+    this._defaultDrive = options.defaultDrive ?? new Drive({ serverSettings });
     this._defaultDrive.fileChanged.connect(this._onFileChanged, this);
   }
 
@@ -572,12 +594,12 @@ export class ContentsManager implements Contents.IManager {
 
   /**
    * Given a path, get a ModelDB.IFactory from the
-   * relevant backend. Returns `null` if the backend
+   * relevant backend. Returns `undefined` if the backend
    * does not provide one.
    */
   getModelDBFactory(path: string): ModelDB.IFactory | null {
-    let [drive] = this._driveForPath(path);
-    return (drive && drive.modelDBFactory) || null;
+    const [drive] = this._driveForPath(path);
+    return drive?.modelDBFactory ?? null;
   }
 
   /**
@@ -595,6 +617,23 @@ export class ContentsManager implements Contents.IManager {
       return PathExt.removeSlash(path);
     }
     return PathExt.join(firstParts.slice(1).join(':'), ...parts.slice(1));
+  }
+
+  /**
+   * Normalize a global path. Reduces '..' and '.' parts, and removes
+   * leading slashes from the local part of the path, while retaining
+   * the drive name if it exists.
+   *
+   * @param path: the path.
+   *
+   * @returns The normalized path.
+   */
+  normalize(path: string): string {
+    const parts = path.split(':');
+    if (parts.length === 1) {
+      return PathExt.normalize(path);
+    }
+    return `${parts[0]}:${PathExt.normalize(parts.slice(1).join(':'))}`;
   }
 
   /**
@@ -631,9 +670,9 @@ export class ContentsManager implements Contents.IManager {
     path: string,
     options?: Contents.IFetchOptions
   ): Promise<Contents.IModel> {
-    let [drive, localPath] = this._driveForPath(path);
+    const [drive, localPath] = this._driveForPath(path);
     return drive.get(localPath, options).then(contentsModel => {
-      let listing: Contents.IModel[] = [];
+      const listing: Contents.IModel[] = [];
       if (contentsModel.type === 'directory' && contentsModel.content) {
         each(contentsModel.content, (item: Contents.IModel) => {
           listing.push({
@@ -662,9 +701,11 @@ export class ContentsManager implements Contents.IManager {
    *
    * #### Notes
    * It is expected that the path contains no relative paths.
+   *
+   * The returned URL may include a query parameter.
    */
   getDownloadUrl(path: string): Promise<string> {
-    let [drive, localPath] = this._driveForPath(path);
+    const [drive, localPath] = this._driveForPath(path);
     return drive.getDownloadUrl(localPath);
   }
 
@@ -678,8 +719,8 @@ export class ContentsManager implements Contents.IManager {
    */
   newUntitled(options: Contents.ICreateOptions = {}): Promise<Contents.IModel> {
     if (options.path) {
-      let globalPath = Private.normalize(options.path);
-      let [drive, localPath] = this._driveForPath(globalPath);
+      const globalPath = this.normalize(options.path);
+      const [drive, localPath] = this._driveForPath(globalPath);
       return drive
         .newUntitled({ ...options, path: localPath })
         .then(contentsModel => {
@@ -701,7 +742,7 @@ export class ContentsManager implements Contents.IManager {
    * @returns A promise which resolves when the file is deleted.
    */
   delete(path: string): Promise<void> {
-    let [drive, localPath] = this._driveForPath(path);
+    const [drive, localPath] = this._driveForPath(path);
     return drive.delete(localPath);
   }
 
@@ -716,8 +757,8 @@ export class ContentsManager implements Contents.IManager {
    *   the file is renamed.
    */
   rename(path: string, newPath: string): Promise<Contents.IModel> {
-    let [drive1, path1] = this._driveForPath(path);
-    let [drive2, path2] = this._driveForPath(newPath);
+    const [drive1, path1] = this._driveForPath(path);
+    const [drive2, path2] = this._driveForPath(newPath);
     if (drive1 !== drive2) {
       throw Error('ContentsManager: renaming files must occur within a Drive');
     }
@@ -746,7 +787,7 @@ export class ContentsManager implements Contents.IManager {
     path: string,
     options: Partial<Contents.IModel> = {}
   ): Promise<Contents.IModel> {
-    const globalPath = Private.normalize(path);
+    const globalPath = this.normalize(path);
     const [drive, localPath] = this._driveForPath(path);
     return drive
       .save(localPath, { ...options, path: localPath })
@@ -769,8 +810,8 @@ export class ContentsManager implements Contents.IManager {
    * The server will select the name of the copied file.
    */
   copy(fromFile: string, toDir: string): Promise<Contents.IModel> {
-    let [drive1, path1] = this._driveForPath(fromFile);
-    let [drive2, path2] = this._driveForPath(toDir);
+    const [drive1, path1] = this._driveForPath(fromFile);
+    const [drive2, path2] = this._driveForPath(toDir);
     if (drive1 === drive2) {
       return drive1.copy(path1, path2).then(contentsModel => {
         return {
@@ -792,7 +833,7 @@ export class ContentsManager implements Contents.IManager {
    *   checkpoint is created.
    */
   createCheckpoint(path: string): Promise<Contents.ICheckpointModel> {
-    let [drive, localPath] = this._driveForPath(path);
+    const [drive, localPath] = this._driveForPath(path);
     return drive.createCheckpoint(localPath);
   }
 
@@ -805,7 +846,7 @@ export class ContentsManager implements Contents.IManager {
    *    the file.
    */
   listCheckpoints(path: string): Promise<Contents.ICheckpointModel[]> {
-    let [drive, localPath] = this._driveForPath(path);
+    const [drive, localPath] = this._driveForPath(path);
     return drive.listCheckpoints(localPath);
   }
 
@@ -819,7 +860,7 @@ export class ContentsManager implements Contents.IManager {
    * @returns A promise which resolves when the checkpoint is restored.
    */
   restoreCheckpoint(path: string, checkpointID: string): Promise<void> {
-    let [drive, localPath] = this._driveForPath(path);
+    const [drive, localPath] = this._driveForPath(path);
     return drive.restoreCheckpoint(localPath, checkpointID);
   }
 
@@ -833,7 +874,7 @@ export class ContentsManager implements Contents.IManager {
    * @returns A promise which resolves when the checkpoint is deleted.
    */
   deleteCheckpoint(path: string, checkpointID: string): Promise<void> {
-    let [drive, localPath] = this._driveForPath(path);
+    const [drive, localPath] = this._driveForPath(path);
     return drive.deleteCheckpoint(localPath, checkpointID);
   }
 
@@ -870,7 +911,7 @@ export class ContentsManager implements Contents.IManager {
     const driveName = this.driveName(path);
     const localPath = this.localPath(path);
     if (driveName) {
-      return [this._additionalDrives.get(driveName), localPath];
+      return [this._additionalDrives.get(driveName)!, localPath];
     } else {
       return [this._defaultDrive, localPath];
     }
@@ -887,13 +928,13 @@ export class ContentsManager implements Contents.IManager {
     } else {
       let newValue: Partial<Contents.IModel> | null = null;
       let oldValue: Partial<Contents.IModel> | null = null;
-      if (args.newValue && args.newValue.path) {
+      if (args.newValue?.path) {
         newValue = {
           ...args.newValue,
           path: this._toGlobalPath(sender, args.newValue.path)
         };
       }
-      if (args.oldValue && args.oldValue.path) {
+      if (args.oldValue?.path) {
         oldValue = {
           ...args.oldValue,
           path: this._toGlobalPath(sender, args.oldValue.path)
@@ -924,10 +965,10 @@ export class Drive implements Contents.IDrive {
    * @param options - The options used to initialize the object.
    */
   constructor(options: Drive.IOptions = {}) {
-    this.name = options.name || 'Default';
-    this._apiEndpoint = options.apiEndpoint || SERVICE_DRIVE_URL;
+    this.name = options.name ?? 'Default';
+    this._apiEndpoint = options.apiEndpoint ?? SERVICE_DRIVE_URL;
     this.serverSettings =
-      options.serverSettings || ServerConnection.makeSettings();
+      options.serverSettings ?? ServerConnection.makeSettings();
   }
 
   /**
@@ -977,7 +1018,7 @@ export class Drive implements Contents.IDrive {
    *
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents) and validates the response model.
    */
-  get(
+  async get(
     localPath: string,
     options?: Contents.IFetchOptions
   ): Promise<Contents.IModel> {
@@ -987,23 +1028,20 @@ export class Drive implements Contents.IDrive {
       if (options.type === 'notebook') {
         delete options['format'];
       }
-      let content = options.content ? '1' : '0';
-      let params: JSONObject = { ...options, content };
+      const content = options.content ? '1' : '0';
+      const params: PartialJSONObject = { ...options, content };
       url += URLExt.objectToQueryString(params);
     }
 
-    let settings = this.serverSettings;
-    return ServerConnection.makeRequest(url, {}, settings)
-      .then(response => {
-        if (response.status !== 200) {
-          throw new ServerConnection.ResponseError(response);
-        }
-        return response.json();
-      })
-      .then(data => {
-        validate.validateContentsModel(data);
-        return data;
-      });
+    const settings = this.serverSettings;
+    const response = await ServerConnection.makeRequest(url, {}, settings);
+    if (response.status !== 200) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    const data = await response.json();
+    validate.validateContentsModel(data);
+    return data;
   }
 
   /**
@@ -1013,12 +1051,19 @@ export class Drive implements Contents.IDrive {
    *
    * #### Notes
    * It is expected that the path contains no relative paths.
+   *
+   * The returned URL may include a query parameter.
    */
   getDownloadUrl(localPath: string): Promise<string> {
-    let baseUrl = this.serverSettings.baseUrl;
-    return Promise.resolve(
-      URLExt.join(baseUrl, FILES_URL, URLExt.encodeParts(localPath))
-    );
+    const baseUrl = this.serverSettings.baseUrl;
+    let url = URLExt.join(baseUrl, FILES_URL, URLExt.encodeParts(localPath));
+    const xsrfTokenMatch = document.cookie.match('\\b_xsrf=([^;]*)\\b');
+    if (xsrfTokenMatch) {
+      const fullurl = new URL(url);
+      fullurl.searchParams.append('_xsrf', xsrfTokenMatch[1]);
+      url = fullurl.toString();
+    }
+    return Promise.resolve(url);
   }
 
   /**
@@ -1032,7 +1077,9 @@ export class Drive implements Contents.IDrive {
    * #### Notes
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents) and validates the response model.
    */
-  newUntitled(options: Contents.ICreateOptions = {}): Promise<Contents.IModel> {
+  async newUntitled(
+    options: Contents.ICreateOptions = {}
+  ): Promise<Contents.IModel> {
     let body = '{}';
     if (options) {
       if (options.ext) {
@@ -1041,28 +1088,25 @@ export class Drive implements Contents.IDrive {
       body = JSON.stringify(options);
     }
 
-    let settings = this.serverSettings;
-    let url = this._getUrl(options.path || '');
-    let init = {
+    const settings = this.serverSettings;
+    const url = this._getUrl(options.path ?? '');
+    const init = {
       method: 'POST',
       body
     };
-    return ServerConnection.makeRequest(url, init, settings)
-      .then(response => {
-        if (response.status !== 201) {
-          throw new ServerConnection.ResponseError(response);
-        }
-        return response.json();
-      })
-      .then(data => {
-        validate.validateContentsModel(data);
-        this._fileChanged.emit({
-          type: 'new',
-          oldValue: null,
-          newValue: data
-        });
-        return data;
-      });
+    const response = await ServerConnection.makeRequest(url, init, settings);
+    if (response.status !== 201) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    const data = await response.json();
+    validate.validateContentsModel(data);
+    this._fileChanged.emit({
+      type: 'new',
+      oldValue: null,
+      newValue: data
+    });
+    return data;
   }
 
   /**
@@ -1075,27 +1119,21 @@ export class Drive implements Contents.IDrive {
    * #### Notes
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents).
    */
-  delete(localPath: string): Promise<void> {
-    let url = this._getUrl(localPath);
-    let settings = this.serverSettings;
-    let init = { method: 'DELETE' };
-    return ServerConnection.makeRequest(url, init, settings).then(response => {
-      // Translate certain errors to more specific ones.
-      // TODO: update IPEP27 to specify errors more precisely, so
-      // that error types can be detected here with certainty.
-      if (response.status === 400) {
-        return response.json().then(data => {
-          throw new ServerConnection.ResponseError(response, data['message']);
-        });
-      }
-      if (response.status !== 204) {
-        throw new ServerConnection.ResponseError(response);
-      }
-      this._fileChanged.emit({
-        type: 'delete',
-        oldValue: { path: localPath },
-        newValue: null
-      });
+  async delete(localPath: string): Promise<void> {
+    const url = this._getUrl(localPath);
+    const settings = this.serverSettings;
+    const init = { method: 'DELETE' };
+    const response = await ServerConnection.makeRequest(url, init, settings);
+    // TODO: update IPEP27 to specify errors more precisely, so
+    // that error types can be detected here with certainty.
+    if (response.status !== 204) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    this._fileChanged.emit({
+      type: 'delete',
+      oldValue: { path: localPath },
+      newValue: null
     });
   }
 
@@ -1112,29 +1150,29 @@ export class Drive implements Contents.IDrive {
    * #### Notes
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents) and validates the response model.
    */
-  rename(oldLocalPath: string, newLocalPath: string): Promise<Contents.IModel> {
-    let settings = this.serverSettings;
-    let url = this._getUrl(oldLocalPath);
-    let init = {
+  async rename(
+    oldLocalPath: string,
+    newLocalPath: string
+  ): Promise<Contents.IModel> {
+    const settings = this.serverSettings;
+    const url = this._getUrl(oldLocalPath);
+    const init = {
       method: 'PATCH',
       body: JSON.stringify({ path: newLocalPath })
     };
-    return ServerConnection.makeRequest(url, init, settings)
-      .then(response => {
-        if (response.status !== 200) {
-          throw new ServerConnection.ResponseError(response);
-        }
-        return response.json();
-      })
-      .then(data => {
-        validate.validateContentsModel(data);
-        this._fileChanged.emit({
-          type: 'rename',
-          oldValue: { path: oldLocalPath },
-          newValue: data
-        });
-        return data;
-      });
+    const response = await ServerConnection.makeRequest(url, init, settings);
+    if (response.status !== 200) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    const data = await response.json();
+    validate.validateContentsModel(data);
+    this._fileChanged.emit({
+      type: 'rename',
+      oldValue: { path: oldLocalPath },
+      newValue: data
+    });
+    return data;
   }
 
   /**
@@ -1152,33 +1190,30 @@ export class Drive implements Contents.IDrive {
    *
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents) and validates the response model.
    */
-  save(
+  async save(
     localPath: string,
     options: Partial<Contents.IModel> = {}
   ): Promise<Contents.IModel> {
-    let settings = this.serverSettings;
-    let url = this._getUrl(localPath);
-    let init = {
+    const settings = this.serverSettings;
+    const url = this._getUrl(localPath);
+    const init = {
       method: 'PUT',
       body: JSON.stringify(options)
     };
-    return ServerConnection.makeRequest(url, init, settings)
-      .then(response => {
-        // will return 200 for an existing file and 201 for a new file
-        if (response.status !== 200 && response.status !== 201) {
-          throw new ServerConnection.ResponseError(response);
-        }
-        return response.json();
-      })
-      .then(data => {
-        validate.validateContentsModel(data);
-        this._fileChanged.emit({
-          type: 'save',
-          oldValue: null,
-          newValue: data
-        });
-        return data;
-      });
+    const response = await ServerConnection.makeRequest(url, init, settings);
+    // will return 200 for an existing file and 201 for a new file
+    if (response.status !== 200 && response.status !== 201) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    const data = await response.json();
+    validate.validateContentsModel(data);
+    this._fileChanged.emit({
+      type: 'save',
+      oldValue: null,
+      newValue: data
+    });
+    return data;
   }
 
   /**
@@ -1196,29 +1231,26 @@ export class Drive implements Contents.IDrive {
    *
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents) and validates the response model.
    */
-  copy(fromFile: string, toDir: string): Promise<Contents.IModel> {
-    let settings = this.serverSettings;
-    let url = this._getUrl(toDir);
-    let init = {
+  async copy(fromFile: string, toDir: string): Promise<Contents.IModel> {
+    const settings = this.serverSettings;
+    const url = this._getUrl(toDir);
+    const init = {
       method: 'POST',
       body: JSON.stringify({ copy_from: fromFile })
     };
-    return ServerConnection.makeRequest(url, init, settings)
-      .then(response => {
-        if (response.status !== 201) {
-          throw new ServerConnection.ResponseError(response);
-        }
-        return response.json();
-      })
-      .then(data => {
-        validate.validateContentsModel(data);
-        this._fileChanged.emit({
-          type: 'new',
-          oldValue: null,
-          newValue: data
-        });
-        return data;
-      });
+    const response = await ServerConnection.makeRequest(url, init, settings);
+    if (response.status !== 201) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    const data = await response.json();
+    validate.validateContentsModel(data);
+    this._fileChanged.emit({
+      type: 'new',
+      oldValue: null,
+      newValue: data
+    });
+    return data;
   }
 
   /**
@@ -1232,20 +1264,23 @@ export class Drive implements Contents.IDrive {
    * #### Notes
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents) and validates the response model.
    */
-  createCheckpoint(localPath: string): Promise<Contents.ICheckpointModel> {
-    let url = this._getUrl(localPath, 'checkpoints');
-    let init = { method: 'POST' };
-    return ServerConnection.makeRequest(url, init, this.serverSettings)
-      .then(response => {
-        if (response.status !== 201) {
-          throw new ServerConnection.ResponseError(response);
-        }
-        return response.json();
-      })
-      .then(data => {
-        validate.validateCheckpointModel(data);
-        return data;
-      });
+  async createCheckpoint(
+    localPath: string
+  ): Promise<Contents.ICheckpointModel> {
+    const url = this._getUrl(localPath, 'checkpoints');
+    const init = { method: 'POST' };
+    const response = await ServerConnection.makeRequest(
+      url,
+      init,
+      this.serverSettings
+    );
+    if (response.status !== 201) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    const data = await response.json();
+    validate.validateCheckpointModel(data);
+    return data;
   }
 
   /**
@@ -1259,24 +1294,27 @@ export class Drive implements Contents.IDrive {
    * #### Notes
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents) and validates the response model.
    */
-  listCheckpoints(localPath: string): Promise<Contents.ICheckpointModel[]> {
-    let url = this._getUrl(localPath, 'checkpoints');
-    return ServerConnection.makeRequest(url, {}, this.serverSettings)
-      .then(response => {
-        if (response.status !== 200) {
-          throw new ServerConnection.ResponseError(response);
-        }
-        return response.json();
-      })
-      .then(data => {
-        if (!Array.isArray(data)) {
-          throw new Error('Invalid Checkpoint list');
-        }
-        for (let i = 0; i < data.length; i++) {
-          validate.validateCheckpointModel(data[i]);
-        }
-        return data;
-      });
+  async listCheckpoints(
+    localPath: string
+  ): Promise<Contents.ICheckpointModel[]> {
+    const url = this._getUrl(localPath, 'checkpoints');
+    const response = await ServerConnection.makeRequest(
+      url,
+      {},
+      this.serverSettings
+    );
+    if (response.status !== 200) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      throw new Error('Invalid Checkpoint list');
+    }
+    for (let i = 0; i < data.length; i++) {
+      validate.validateCheckpointModel(data[i]);
+    }
+    return data;
   }
 
   /**
@@ -1291,16 +1329,21 @@ export class Drive implements Contents.IDrive {
    * #### Notes
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents).
    */
-  restoreCheckpoint(localPath: string, checkpointID: string): Promise<void> {
-    let url = this._getUrl(localPath, 'checkpoints', checkpointID);
-    let init = { method: 'POST' };
-    return ServerConnection.makeRequest(url, init, this.serverSettings).then(
-      response => {
-        if (response.status !== 204) {
-          throw new ServerConnection.ResponseError(response);
-        }
-      }
+  async restoreCheckpoint(
+    localPath: string,
+    checkpointID: string
+  ): Promise<void> {
+    const url = this._getUrl(localPath, 'checkpoints', checkpointID);
+    const init = { method: 'POST' };
+    const response = await ServerConnection.makeRequest(
+      url,
+      init,
+      this.serverSettings
     );
+    if (response.status !== 204) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
   }
 
   /**
@@ -1315,24 +1358,29 @@ export class Drive implements Contents.IDrive {
    * #### Notes
    * Uses the [Jupyter Notebook API](http://petstore.swagger.io/?url=https://raw.githubusercontent.com/jupyter/notebook/master/notebook/services/api/api.yaml#!/contents).
    */
-  deleteCheckpoint(localPath: string, checkpointID: string): Promise<void> {
-    let url = this._getUrl(localPath, 'checkpoints', checkpointID);
-    let init = { method: 'DELETE' };
-    return ServerConnection.makeRequest(url, init, this.serverSettings).then(
-      response => {
-        if (response.status !== 204) {
-          throw new ServerConnection.ResponseError(response);
-        }
-      }
+  async deleteCheckpoint(
+    localPath: string,
+    checkpointID: string
+  ): Promise<void> {
+    const url = this._getUrl(localPath, 'checkpoints', checkpointID);
+    const init = { method: 'DELETE' };
+    const response = await ServerConnection.makeRequest(
+      url,
+      init,
+      this.serverSettings
     );
+    if (response.status !== 204) {
+      const err = await ServerConnection.ResponseError.create(response);
+      throw err;
+    }
   }
 
   /**
    * Get a REST url for a file given a path.
    */
   private _getUrl(...args: string[]): string {
-    let parts = args.map(path => URLExt.encodeParts(path));
-    let baseUrl = this.serverSettings.baseUrl;
+    const parts = args.map(path => URLExt.encodeParts(path));
+    const baseUrl = this.serverSettings.baseUrl;
     return URLExt.join(baseUrl, this._apiEndpoint, ...parts);
   }
 
@@ -1403,18 +1451,5 @@ namespace Private {
       extension = `.${extension}`;
     }
     return extension;
-  }
-
-  /**
-   * Normalize a global path. Reduces '..' and '.' parts, and removes
-   * leading slashes from the local part of the path, while retaining
-   * the drive name if it exists.
-   */
-  export function normalize(path: string): string {
-    const parts = path.split(':');
-    if (parts.length === 1) {
-      return PathExt.normalize(path);
-    }
-    return `${parts[0]}:${PathExt.normalize(parts.slice(1).join(':'))}`;
   }
 }

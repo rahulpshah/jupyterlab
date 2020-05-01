@@ -7,13 +7,15 @@ import { DocumentRegistry } from '@jupyterlab/docregistry';
 
 import { ServiceManager } from '@jupyterlab/services';
 
-import { IIterator } from '@phosphor/algorithm';
+import { ContextMenuSvg } from '@jupyterlab/ui-components';
 
-import { Application, IPlugin } from '@phosphor/application';
+import { IIterator } from '@lumino/algorithm';
 
-import { Token } from '@phosphor/coreutils';
+import { Application, IPlugin } from '@lumino/application';
 
-import { Widget } from '@phosphor/widgets';
+import { Token } from '@lumino/coreutils';
+
+import { Widget } from '@lumino/widgets';
 
 /**
  * The type for all JupyterFrontEnd application plugins.
@@ -40,8 +42,14 @@ export abstract class JupyterFrontEnd<
   constructor(options: JupyterFrontEnd.IOptions<T>) {
     super(options);
 
+    // render context menu/submenus with inline svg icon tweaks
+    this.contextMenu = new ContextMenuSvg({
+      commands: this.commands,
+      renderer: options.contextMenuRenderer
+    });
+
     // The default restored promise if one does not exist in the options.
-    const restored = new Promise(resolve => {
+    const restored = new Promise<void>(resolve => {
       requestAnimationFrame(() => {
         resolve();
       });
@@ -105,8 +113,8 @@ export abstract class JupyterFrontEnd<
 
   /**
    * Walks up the DOM hierarchy of the target of the active `contextmenu`
-   * event, testing the nodes for a user-supplied funcion. This can
-   * be used to find a node on which to operate, given a context menu click.
+   * event, testing each HTMLElement ancestor for a user-supplied funcion. This can
+   * be used to find an HTMLElement on which to operate, given a context menu click.
    *
    * @param test - a function that takes an `HTMLElement` and returns a
    *   boolean for whether it is the element the requester is seeking.
@@ -118,16 +126,16 @@ export abstract class JupyterFrontEnd<
   ): HTMLElement | undefined {
     if (
       !this._contextMenuEvent ||
-      !(this._contextMenuEvent.target instanceof HTMLElement)
+      !(this._contextMenuEvent.target instanceof Node)
     ) {
       return undefined;
     }
-    let node = this._contextMenuEvent.target as HTMLElement;
+    let node: Node | null = this._contextMenuEvent.target;
     do {
-      if (test(node)) {
+      if (node instanceof HTMLElement && test(node)) {
         return node;
       }
-      node = node.parentNode as HTMLElement;
+      node = node.parentNode;
     } while (node && node.parentNode && node !== node.parentNode);
     return undefined;
 
@@ -150,7 +158,10 @@ export abstract class JupyterFrontEnd<
    */
   protected evtContextMenu(event: MouseEvent): void {
     this._contextMenuEvent = event;
-    if (event.shiftKey) {
+    if (
+      event.shiftKey ||
+      Private.suppressContextMenu(event.target as HTMLElement)
+    ) {
       return;
     }
     const opened = this.contextMenu.open(event);
@@ -171,6 +182,8 @@ export abstract class JupyterFrontEnd<
       event.stopPropagation();
     }
   }
+
+  readonly contextMenu: ContextMenuSvg;
 
   private _contextMenuEvent: MouseEvent;
 }
@@ -241,7 +254,7 @@ export namespace JupyterFrontEnd {
      * Different shell implementations have latitude to decide what "current"
      * or "focused" mean, depending on their user interface characteristics.
      */
-    readonly currentWidget: Widget;
+    readonly currentWidget: Widget | null;
 
     /**
      * Returns an iterator for the widgets inside the application shell.
@@ -265,14 +278,17 @@ export namespace JupyterFrontEnd {
      */
     readonly urls: {
       readonly base: string;
-      readonly defaultWorkspace: string;
       readonly notFound?: string;
-      readonly page: string;
-      readonly public: string;
+      readonly app: string;
+      readonly static: string;
       readonly settings: string;
       readonly themes: string;
       readonly tree: string;
       readonly workspaces: string;
+      readonly hubPrefix?: string;
+      readonly hubHost?: string;
+      readonly hubUser?: string;
+      readonly hubServerName?: string;
     };
 
     /**
@@ -302,6 +318,39 @@ export namespace JupyterFrontEnd {
       readonly workspaces: string;
     };
   }
+
+  /**
+   * The application tree resolver token.
+   *
+   * #### Notes
+   * Not all Jupyter front-end applications will have a tree resolver
+   * implemented on the client-side. This token should not be required as a
+   * dependency if it is possible to make it an optional dependency.
+   */
+  export const ITreeResolver = new Token<ITreeResolver>(
+    '@jupyterlab/application:ITreeResolver'
+  );
+
+  /**
+   * An interface for a front-end tree route resolver.
+   */
+  export interface ITreeResolver {
+    /**
+     * A promise that resolves to the routed tree paths or null.
+     */
+    readonly paths: Promise<ITreeResolver.Paths>;
+  }
+
+  /**
+   * A namespace for tree resolver types.
+   */
+  export namespace ITreeResolver {
+    /**
+     * The browser and file paths if the tree resolver encountered and handled
+     * a tree URL or `null` if not. Empty string paths should be ignored.
+     */
+    export type Paths = { browser: string; file: string } | null;
+  }
 }
 
 /**
@@ -313,4 +362,11 @@ namespace Private {
    * ersatz command.
    */
   export const CONTEXT_MENU_INFO = '__internal:context-menu-info';
+
+  /**
+   * Returns whether the element is itself, or a child of, an element with the `jp-suppress-context-menu` data attribute.
+   */
+  export function suppressContextMenu(element: HTMLElement): boolean {
+    return element.closest('[data-jp-suppress-context-menu]') !== null;
+  }
 }

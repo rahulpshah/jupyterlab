@@ -1,7 +1,7 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { IInstanceTracker, InstanceTracker } from '@jupyterlab/apputils';
+import { IWidgetTracker, WidgetTracker } from '@jupyterlab/apputils';
 
 import {
   MimeDocumentFactory,
@@ -13,9 +13,11 @@ import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 
 import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 
-import { Token } from '@phosphor/coreutils';
+import { LabIcon } from '@jupyterlab/ui-components';
 
-import { AttachedProperty } from '@phosphor/properties';
+import { Token } from '@lumino/coreutils';
+
+import { AttachedProperty } from '@lumino/properties';
 
 import { JupyterFrontEnd, JupyterFrontEndPlugin } from './index';
 
@@ -24,7 +26,7 @@ import { ILayoutRestorer } from './layoutrestorer';
 /**
  * A class that tracks mime documents.
  */
-export interface IMimeDocumentTracker extends IInstanceTracker<MimeDocument> {}
+export interface IMimeDocumentTracker extends IWidgetTracker<MimeDocument> {}
 
 /* tslint:disable */
 /**
@@ -44,7 +46,7 @@ export function createRendermimePlugins(
   const plugins: JupyterFrontEndPlugin<void | IMimeDocumentTracker>[] = [];
 
   const namespace = 'application-mimedocuments';
-  const tracker = new InstanceTracker<MimeDocument>({ namespace });
+  const tracker = new WidgetTracker<MimeDocument>({ namespace });
 
   extensions.forEach(mod => {
     let data = mod.default;
@@ -62,7 +64,7 @@ export function createRendermimePlugins(
   });
 
   // Also add a meta-plugin handling state restoration
-  // and exposing the mime document instance tracker.
+  // and exposing the mime document widget tracker.
   plugins.push({
     id: '@jupyterlab/application:mimedocument',
     optional: [ILayoutRestorer],
@@ -70,7 +72,7 @@ export function createRendermimePlugins(
     autoStart: true,
     activate: (app: JupyterFrontEnd, restorer: ILayoutRestorer | null) => {
       if (restorer) {
-        restorer.restore(tracker, {
+        void restorer.restore(tracker, {
           command: 'docmanager:open',
           args: widget => ({
             path: widget.context.path,
@@ -91,7 +93,7 @@ export function createRendermimePlugins(
  * Create rendermime plugins for rendermime extension modules.
  */
 export function createRendermimePlugin(
-  tracker: InstanceTracker<MimeDocument>,
+  tracker: WidgetTracker<MimeDocument>,
   item: IRenderMime.IExtension
 ): JupyterFrontEndPlugin<void> {
   return {
@@ -111,7 +113,7 @@ export function createRendermimePlugin(
         return;
       }
 
-      let registry = app.docRegistry;
+      const registry = app.docRegistry;
       let options: IRenderMime.IDocumentWidgetFactoryOptions[] = [];
       if (Array.isArray(item.documentWidgetFactoryOptions)) {
         options = item.documentWidgetFactoryOptions;
@@ -123,15 +125,20 @@ export function createRendermimePlugin(
 
       if (item.fileTypes) {
         item.fileTypes.forEach(ft => {
+          if (ft.icon) {
+            // upconvert the contents of the icon field to a proper LabIcon
+            ft = { ...ft, icon: LabIcon.resolve({ icon: ft.icon }) };
+          }
+
           app.docRegistry.addFileType(ft as DocumentRegistry.IFileType);
         });
       }
 
       options.forEach(option => {
         const toolbarFactory = option.toolbarFactory
-          ? (w: MimeDocument) => option.toolbarFactory(w.content.renderer)
+          ? (w: MimeDocument) => option.toolbarFactory!(w.content.renderer)
           : undefined;
-        let factory = new MimeDocumentFactory({
+        const factory = new MimeDocumentFactory({
           renderTimeout: item.renderTimeout,
           dataType: item.dataType,
           rendermime,
@@ -147,7 +154,7 @@ export function createRendermimePlugin(
 
         factory.widgetCreated.connect((sender, widget) => {
           Private.factoryNameProperty.set(widget, factory.name);
-          // Notify the instance tracker if restore data needs to update.
+          // Notify the widget tracker if restore data needs to update.
           widget.context.pathChanged.connect(() => {
             void tracker.save(widget);
           });
@@ -166,10 +173,11 @@ namespace Private {
    * An attached property for keeping the factory name
    * that was used to create a mimedocument.
    */
-  export const factoryNameProperty = new AttachedProperty<MimeDocument, string>(
-    {
-      name: 'factoryName',
-      create: () => undefined
-    }
-  );
+  export const factoryNameProperty = new AttachedProperty<
+    MimeDocument,
+    string | undefined
+  >({
+    name: 'factoryName',
+    create: () => undefined
+  });
 }

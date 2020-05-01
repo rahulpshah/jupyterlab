@@ -6,45 +6,48 @@ import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 __webpack_public_path__ = URLExt.join(PageConfig.getBaseUrl(), 'example/');
 
 import '@jupyterlab/application/style/index.css';
+import '@jupyterlab/codemirror/style/index.css';
 import '@jupyterlab/filebrowser/style/index.css';
 import '@jupyterlab/theme-light-extension/style/index.css';
 import '../index.css';
 
-import { each } from '@phosphor/algorithm';
+import { each } from '@lumino/algorithm';
 
-import { CommandRegistry } from '@phosphor/commands';
+import { CommandRegistry } from '@lumino/commands';
 
-import { DockPanel, Menu, SplitPanel, Widget } from '@phosphor/widgets';
+import { DockPanel, Menu, SplitPanel, Widget } from '@lumino/widgets';
 
 import { ServiceManager } from '@jupyterlab/services';
 
 import { Dialog, ToolbarButton, showDialog } from '@jupyterlab/apputils';
-
-import { FileBrowser, FileBrowserModel } from '@jupyterlab/filebrowser';
-
-import { DocumentManager } from '@jupyterlab/docmanager';
-
-import { DocumentRegistry } from '@jupyterlab/docregistry';
 
 import {
   CodeMirrorEditorFactory,
   CodeMirrorMimeTypeService
 } from '@jupyterlab/codemirror';
 
+import { DocumentManager } from '@jupyterlab/docmanager';
+
+import { DocumentRegistry } from '@jupyterlab/docregistry';
+
+import { FileBrowser, FileBrowserModel } from '@jupyterlab/filebrowser';
+
 import { FileEditorFactory } from '@jupyterlab/fileeditor';
 
+import { addIcon } from '@jupyterlab/ui-components';
+
 function main(): void {
-  let manager = new ServiceManager();
+  const manager = new ServiceManager();
   void manager.ready.then(() => {
     createApp(manager);
   });
 }
 
 function createApp(manager: ServiceManager.IManager): void {
-  let widgets: Widget[] = [];
+  const widgets: Widget[] = [];
   let activeWidget: Widget;
 
-  let opener = {
+  const opener = {
     open: (widget: Widget) => {
       if (widgets.indexOf(widget) === -1) {
         dock.addWidget(widget, { mode: 'tab-after' });
@@ -53,23 +56,23 @@ function createApp(manager: ServiceManager.IManager): void {
       dock.activateWidget(widget);
       activeWidget = widget;
       widget.disposed.connect((w: Widget) => {
-        let index = widgets.indexOf(w);
+        const index = widgets.indexOf(w);
         widgets.splice(index, 1);
       });
     }
   };
 
-  let docRegistry = new DocumentRegistry();
-  let docManager = new DocumentManager({
+  const docRegistry = new DocumentRegistry();
+  const docManager = new DocumentManager({
     registry: docRegistry,
     manager,
     opener
   });
-  let editorServices = {
+  const editorServices = {
     factoryService: new CodeMirrorEditorFactory(),
     mimeTypeService: new CodeMirrorMimeTypeService()
   };
-  let wFactory = new FileEditorFactory({
+  const wFactory = new FileEditorFactory({
     editorServices,
     factoryOptions: {
       name: 'Editor',
@@ -82,17 +85,19 @@ function createApp(manager: ServiceManager.IManager): void {
   });
   docRegistry.addWidgetFactory(wFactory);
 
-  let commands = new CommandRegistry();
+  const commands = new CommandRegistry();
 
-  let fbModel = new FileBrowserModel({ manager: docManager });
-  let fbWidget = new FileBrowser({
+  const fbModel = new FileBrowserModel({
+    manager: docManager
+  });
+  const fbWidget = new FileBrowser({
     id: 'filebrowser',
     model: fbModel
   });
 
   // Add a creator toolbar item.
-  let creator = new ToolbarButton({
-    iconClassName: 'jp-AddIcon jp-Icon jp-Icon-16',
+  const creator = new ToolbarButton({
+    icon: addIcon,
     onClick: () => {
       void docManager
         .newUntitled({
@@ -106,18 +111,18 @@ function createApp(manager: ServiceManager.IManager): void {
   });
   fbWidget.toolbar.insertItem(0, 'create', creator);
 
-  let panel = new SplitPanel();
+  const panel = new SplitPanel();
   panel.id = 'main';
   panel.addWidget(fbWidget);
   SplitPanel.setStretch(fbWidget, 0);
-  let dock = new DockPanel();
+  const dock = new DockPanel();
   panel.addWidget(dock);
   SplitPanel.setStretch(dock, 1);
   dock.spacing = 8;
 
   document.addEventListener('focus', event => {
     for (let i = 0; i < widgets.length; i++) {
-      let widget = widgets[i];
+      const widget = widgets[i];
       if (widget.node.contains(event.target as HTMLElement)) {
         activeWidget = widget;
         break;
@@ -146,8 +151,8 @@ function createApp(manager: ServiceManager.IManager): void {
   });
   commands.addCommand('file-save', {
     execute: () => {
-      let context = docManager.contextForWidget(activeWidget);
-      return context.save();
+      const context = docManager.contextForWidget(activeWidget);
+      return context?.save();
     }
   });
   commands.addCommand('file-cut', {
@@ -212,7 +217,7 @@ function createApp(manager: ServiceManager.IManager): void {
   commands.addCommand('file-info-demo', {
     label: 'Info Demo',
     execute: () => {
-      let msg = 'The quick brown fox jumped over the lazy dog';
+      const msg = 'The quick brown fox jumped over the lazy dog';
       void showDialog({
         title: 'Cool Title',
         body: msg,
@@ -236,7 +241,7 @@ function createApp(manager: ServiceManager.IManager): void {
   });
 
   // Create a context menu.
-  let menu = new Menu({ commands });
+  const menu = new Menu({ commands });
   menu.addItem({ command: 'file-open' });
   menu.addItem({ command: 'file-rename' });
   menu.addItem({ command: 'file-remove' });
@@ -250,11 +255,11 @@ function createApp(manager: ServiceManager.IManager): void {
   menu.addItem({ command: 'file-info-demo' });
 
   // Add a context menu to the dir listing.
-  let node = fbWidget.node.getElementsByClassName('jp-DirListing-content')[0];
+  const node = fbWidget.node.getElementsByClassName('jp-DirListing-content')[0];
   node.addEventListener('contextmenu', (event: MouseEvent) => {
     event.preventDefault();
-    let x = event.clientX;
-    let y = event.clientY;
+    const x = event.clientX;
+    const y = event.clientY;
     menu.open(x, y);
   });
 
@@ -266,22 +271,22 @@ function createApp(manager: ServiceManager.IManager): void {
     panel.update();
   });
 
-  console.log('Example started!');
+  console.debug('Example started!');
 }
 
 /**
  * Create a non-functional dialog demo.
  */
 function dialogDemo(): void {
-  let body = document.createElement('div');
-  let input = document.createElement('input');
+  const body = document.createElement('div');
+  const input = document.createElement('input');
   input.value = 'Untitled.ipynb';
-  let selector = document.createElement('select');
-  let option0 = document.createElement('option');
+  const selector = document.createElement('select');
+  const option0 = document.createElement('option');
   option0.value = 'python';
   option0.text = 'Python 3';
   selector.appendChild(option0);
-  let option1 = document.createElement('option');
+  const option1 = document.createElement('option');
   option1.value = 'julia';
   option1.text = 'Julia';
   selector.appendChild(option1);

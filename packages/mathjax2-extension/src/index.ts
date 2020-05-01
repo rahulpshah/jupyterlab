@@ -1,4 +1,4 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
@@ -19,7 +19,7 @@ const plugin: JupyterFrontEndPlugin<ILatexTypesetter> = {
   autoStart: true,
   provides: ILatexTypesetter,
   activate: () => {
-    const url = PageConfig.getOption('mathjaxUrl');
+    const url = PageConfig.getOption('fullMathjaxUrl');
     const config = PageConfig.getOption('mathjaxConfig');
 
     if (!url) {

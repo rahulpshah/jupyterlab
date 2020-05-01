@@ -1,8 +1,6 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { Contents, Kernel } from '@jupyterlab/services';
-
 import {
   ArrayExt,
   ArrayIterator,
@@ -11,17 +9,17 @@ import {
   empty,
   find,
   map
-} from '@phosphor/algorithm';
+} from '@lumino/algorithm';
 
-import { JSONValue } from '@phosphor/coreutils';
+import { PartialJSONValue, ReadonlyPartialJSONValue } from '@lumino/coreutils';
 
-import { IDisposable, DisposableDelegate } from '@phosphor/disposable';
+import { IDisposable, DisposableDelegate } from '@lumino/disposable';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
-import { DockLayout, Widget } from '@phosphor/widgets';
+import { DockLayout, Widget } from '@lumino/widgets';
 
-import { IClientSession, Toolbar } from '@jupyterlab/apputils';
+import { ISessionContext, Toolbar } from '@jupyterlab/apputils';
 
 import { CodeEditor } from '@jupyterlab/codeeditor';
 
@@ -34,6 +32,22 @@ import { IModelDB } from '@jupyterlab/observables';
 
 import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 
+import { Contents, Kernel } from '@jupyterlab/services';
+
+import {
+  fileIcon,
+  folderIcon,
+  imageIcon,
+  LabIcon,
+  jsonIcon,
+  markdownIcon,
+  notebookIcon,
+  pythonIcon,
+  rKernelIcon,
+  spreadsheetIcon,
+  yamlIcon
+} from '@jupyterlab/ui-components';
+
 import { TextModelFactory } from './default';
 
 /**
@@ -44,15 +58,15 @@ export class DocumentRegistry implements IDisposable {
    * Construct a new document registry.
    */
   constructor(options: DocumentRegistry.IOptions = {}) {
-    let factory = options.textModelFactory;
+    const factory = options.textModelFactory;
     if (factory && factory.name !== 'text') {
       throw new Error('Text model factory must have the name `text`');
     }
     this._modelFactories['text'] = factory || new TextModelFactory();
 
-    let fts = options.initialFileTypes || DocumentRegistry.defaultFileTypes;
+    const fts = options.initialFileTypes || DocumentRegistry.defaultFileTypes;
     fts.forEach(ft => {
-      let value: DocumentRegistry.IFileType = {
+      const value: DocumentRegistry.IFileType = {
         ...DocumentRegistry.fileTypeDefaults,
         ...ft
       };
@@ -82,13 +96,13 @@ export class DocumentRegistry implements IDisposable {
       return;
     }
     this._isDisposed = true;
-    for (let modelName in this._modelFactories) {
+    for (const modelName in this._modelFactories) {
       this._modelFactories[modelName].dispose();
     }
-    for (let widgetName in this._widgetFactories) {
+    for (const widgetName in this._widgetFactories) {
       this._widgetFactories[widgetName].dispose();
     }
-    for (let widgetName in this._extenders) {
+    for (const widgetName in this._extenders) {
       this._extenders[widgetName].length = 0;
     }
 
@@ -104,21 +118,25 @@ export class DocumentRegistry implements IDisposable {
    * @returns A disposable which will unregister the factory.
    *
    * #### Notes
-   * If a factory with the given `'displayName'` is already registered,
+   * If a factory with the given `'name'` is already registered,
    * a warning will be logged, and this will be a no-op.
    * If `'*'` is given as a default extension, the factory will be registered
    * as the global default.
    * If an extension or global default is already registered, this factory
    * will override the existing default.
+   * The factory cannot be named an empty string or the string `'default'`.
    */
   addWidgetFactory(factory: DocumentRegistry.WidgetFactory): IDisposable {
-    let name = factory.name.toLowerCase();
+    const name = factory.name.toLowerCase();
+    if (!name || name === 'default') {
+      throw Error('Invalid factory name');
+    }
     if (this._widgetFactories[name]) {
       console.warn(`Duplicate registered factory ${name}`);
       return new DisposableDelegate(Private.noOp);
     }
     this._widgetFactories[name] = factory;
-    for (let ft of factory.defaultFor || []) {
+    for (const ft of factory.defaultFor || []) {
       if (factory.fileTypes.indexOf(ft) === -1) {
         continue;
       }
@@ -128,18 +146,18 @@ export class DocumentRegistry implements IDisposable {
         this._defaultWidgetFactories[ft] = name;
       }
     }
-    for (let ft of factory.defaultRendered || []) {
+    for (const ft of factory.defaultRendered || []) {
       if (factory.fileTypes.indexOf(ft) === -1) {
         continue;
       }
       this._defaultRenderedWidgetFactories[ft] = name;
     }
     // For convenience, store a mapping of file type name -> name
-    for (let ft of factory.fileTypes) {
-      if (!this._widgetFactoryExtensions[ft]) {
-        this._widgetFactoryExtensions[ft] = [];
+    for (const ft of factory.fileTypes) {
+      if (!this._widgetFactoriesForFileType[ft]) {
+        this._widgetFactoriesForFileType[ft] = [];
       }
-      this._widgetFactoryExtensions[ft].push(name);
+      this._widgetFactoriesForFileType[ft].push(name);
     }
     this._changed.emit({
       type: 'widgetFactory',
@@ -151,20 +169,25 @@ export class DocumentRegistry implements IDisposable {
       if (this._defaultWidgetFactory === name) {
         this._defaultWidgetFactory = '';
       }
-      for (let ext of Object.keys(this._defaultWidgetFactories)) {
+      for (const ext of Object.keys(this._defaultWidgetFactories)) {
         if (this._defaultWidgetFactories[ext] === name) {
           delete this._defaultWidgetFactories[ext];
         }
       }
-      for (let ext of Object.keys(this._defaultRenderedWidgetFactories)) {
+      for (const ext of Object.keys(this._defaultRenderedWidgetFactories)) {
         if (this._defaultRenderedWidgetFactories[ext] === name) {
           delete this._defaultRenderedWidgetFactories[ext];
         }
       }
-      for (let ext of Object.keys(this._widgetFactoryExtensions)) {
-        ArrayExt.removeFirstOf(this._widgetFactoryExtensions[ext], name);
-        if (this._widgetFactoryExtensions[ext].length === 0) {
-          delete this._widgetFactoryExtensions[ext];
+      for (const ext of Object.keys(this._widgetFactoriesForFileType)) {
+        ArrayExt.removeFirstOf(this._widgetFactoriesForFileType[ext], name);
+        if (this._widgetFactoriesForFileType[ext].length === 0) {
+          delete this._widgetFactoriesForFileType[ext];
+        }
+      }
+      for (const ext of Object.keys(this._defaultWidgetFactoryOverrides)) {
+        if (this._defaultWidgetFactoryOverrides[ext] === name) {
+          delete this._defaultWidgetFactoryOverrides[ext];
         }
       }
       this._changed.emit({
@@ -188,7 +211,7 @@ export class DocumentRegistry implements IDisposable {
    * and this will be a no-op.
    */
   addModelFactory(factory: DocumentRegistry.ModelFactory): IDisposable {
-    let name = factory.name.toLowerCase();
+    const name = factory.name.toLowerCase();
     if (this._modelFactories[name]) {
       console.warn(`Duplicate registered factory ${name}`);
       return new DisposableDelegate(Private.noOp);
@@ -230,8 +253,8 @@ export class DocumentRegistry implements IDisposable {
     if (!(widgetName in this._extenders)) {
       this._extenders[widgetName] = [];
     }
-    let extenders = this._extenders[widgetName];
-    let index = ArrayExt.firstIndexOf(extenders, extension);
+    const extenders = this._extenders[widgetName];
+    const index = ArrayExt.firstIndexOf(extenders, extension);
     if (index !== -1) {
       console.warn(`Duplicate registered extension for ${widgetName}`);
       return new DisposableDelegate(Private.noOp);
@@ -263,9 +286,11 @@ export class DocumentRegistry implements IDisposable {
    * These are used to populate the "Create New" dialog.
    */
   addFileType(fileType: Partial<DocumentRegistry.IFileType>): IDisposable {
-    let value: DocumentRegistry.IFileType = {
+    const value: DocumentRegistry.IFileType = {
       ...DocumentRegistry.fileTypeDefaults,
-      ...fileType
+      ...fileType,
+      // fall back to fileIcon if needed
+      ...(!(fileType.icon || fileType.iconClass) && { icon: fileIcon })
     };
     this._fileTypes.push(value);
 
@@ -303,12 +328,19 @@ export class DocumentRegistry implements IDisposable {
    * - all other global factories
    */
   preferredWidgetFactories(path: string): DocumentRegistry.WidgetFactory[] {
-    let factories = new Set<string>();
+    const factories = new Set<string>();
 
     // Get the ordered matching file types.
-    let fts = this.getFileTypesForPath(PathExt.basename(path));
+    const fts = this.getFileTypesForPath(PathExt.basename(path));
 
-    // Start with the file type default factories.
+    // Start with any user overrides for the defaults.
+    fts.forEach(ft => {
+      if (ft.name in this._defaultWidgetFactoryOverrides) {
+        factories.add(this._defaultWidgetFactoryOverrides[ft.name]);
+      }
+    });
+
+    // Next add the file type default factories.
     fts.forEach(ft => {
       if (ft.name in this._defaultWidgetFactories) {
         factories.add(this._defaultWidgetFactories[ft.name]);
@@ -329,29 +361,29 @@ export class DocumentRegistry implements IDisposable {
 
     // Add the file type factories in registration order.
     fts.forEach(ft => {
-      if (ft.name in this._widgetFactoryExtensions) {
-        each(this._widgetFactoryExtensions[ft.name], n => {
+      if (ft.name in this._widgetFactoriesForFileType) {
+        each(this._widgetFactoriesForFileType[ft.name], n => {
           factories.add(n);
         });
       }
     });
 
     // Add the rest of the global factories, in registration order.
-    if ('*' in this._widgetFactoryExtensions) {
-      each(this._widgetFactoryExtensions['*'], n => {
+    if ('*' in this._widgetFactoriesForFileType) {
+      each(this._widgetFactoriesForFileType['*'], n => {
         factories.add(n);
       });
     }
 
     // Construct the return list, checking to make sure the corresponding
     // model factories are registered.
-    let factoryList: DocumentRegistry.WidgetFactory[] = [];
+    const factoryList: DocumentRegistry.WidgetFactory[] = [];
     factories.forEach(name => {
-      let factory = this._widgetFactories[name];
+      const factory = this._widgetFactories[name];
       if (!factory) {
         return;
       }
-      let modelName = factory.modelName || 'text';
+      const modelName = factory.modelName || 'text';
       if (modelName in this._modelFactories) {
         factoryList.push(factory);
       }
@@ -375,11 +407,11 @@ export class DocumentRegistry implements IDisposable {
    */
   defaultRenderedWidgetFactory(path: string): DocumentRegistry.WidgetFactory {
     // Get the matching file types.
-    let fts = this.getFileTypesForPath(PathExt.basename(path));
+    const fts = this.getFileTypesForPath(PathExt.basename(path));
 
-    let factory: DocumentRegistry.WidgetFactory = undefined;
+    let factory: DocumentRegistry.WidgetFactory | undefined = undefined;
     // Find if a there is a default rendered factory for this type.
-    for (let ft of fts) {
+    for (const ft of fts) {
       if (ft.name in this._defaultRenderedWidgetFactories) {
         factory = this._widgetFactories[
           this._defaultRenderedWidgetFactories[ft.name]
@@ -405,6 +437,51 @@ export class DocumentRegistry implements IDisposable {
       return this._widgetFactories[this._defaultWidgetFactory];
     }
     return this.preferredWidgetFactories(path)[0];
+  }
+
+  /**
+   * Set overrides for the default widget factory for a file type.
+   *
+   * Normally, a widget factory informs the document registry which file types
+   * it should be the default for using the `defaultFor` option in the
+   * IWidgetFactoryOptions. This function can be used to override that after
+   * the fact.
+   *
+   * @param fileType: The name of the file type.
+   *
+   * @param factory: The name of the factory.
+   *
+   * #### Notes
+   * If `factory` is undefined, then any override will be unset, and the
+   * default factory will revert to the original value.
+   *
+   * If `factory` or `fileType` are not known to the docregistry, or
+   * if `factory` cannot open files of type `fileType`, this will throw
+   * an error.
+   */
+  setDefaultWidgetFactory(fileType: string, factory: string | undefined): void {
+    fileType = fileType.toLowerCase();
+    if (!this.getFileType(fileType)) {
+      throw Error(`Cannot find file type ${fileType}`);
+    }
+    if (!factory) {
+      if (this._defaultWidgetFactoryOverrides[fileType]) {
+        delete this._defaultWidgetFactoryOverrides[fileType];
+      }
+      return;
+    }
+    if (!this.getWidgetFactory(factory)) {
+      throw Error(`Cannot find widget factory ${factory}`);
+    }
+    factory = factory.toLowerCase();
+    const factories = this._widgetFactoriesForFileType[fileType];
+    if (
+      factory !== this._defaultWidgetFactory &&
+      !(factories && factories.includes(factory))
+    ) {
+      throw Error(`Factory ${factory} cannot view file type ${fileType}`);
+    }
+    this._defaultWidgetFactoryOverrides[fileType] = factory;
   }
 
   /**
@@ -504,26 +581,28 @@ export class DocumentRegistry implements IDisposable {
     path: string,
     widgetName: string,
     kernel?: Partial<Kernel.IModel>
-  ): IClientSession.IKernelPreference | undefined {
+  ): ISessionContext.IKernelPreference | undefined {
     widgetName = widgetName.toLowerCase();
-    let widgetFactory = this._widgetFactories[widgetName];
+    const widgetFactory = this._widgetFactories[widgetName];
     if (!widgetFactory) {
       return void 0;
     }
-    let modelFactory = this.getModelFactory(widgetFactory.modelName || 'text');
+    const modelFactory = this.getModelFactory(
+      widgetFactory.modelName || 'text'
+    );
     if (!modelFactory) {
       return void 0;
     }
-    let language = modelFactory.preferredLanguage(PathExt.basename(path));
-    let name = kernel && kernel.name;
-    let id = kernel && kernel.id;
+    const language = modelFactory.preferredLanguage(PathExt.basename(path));
+    const name = kernel && kernel.name;
+    const id = kernel && kernel.id;
     return {
       id,
       name,
       language,
       shouldStart: widgetFactory.preferKernel,
       canStart: widgetFactory.canStartKernel,
-      shutdownOnClose: widgetFactory.shutdownOnClose
+      shutdownOnDispose: widgetFactory.shutdownOnClose
     };
   }
 
@@ -551,8 +630,8 @@ export class DocumentRegistry implements IDisposable {
       default:
         // Find the best matching extension.
         if (model.name || model.path) {
-          let name = model.name || PathExt.basename(model.path);
-          let fts = this.getFileTypesForPath(name);
+          const name = model.name || PathExt.basename(model.path!);
+          const fts = this.getFileTypesForPath(name);
           if (fts.length > 0) {
             return fts[0];
           }
@@ -569,12 +648,12 @@ export class DocumentRegistry implements IDisposable {
    * @returns An ordered list of matching file types.
    */
   getFileTypesForPath(path: string): DocumentRegistry.IFileType[] {
-    let fts: DocumentRegistry.IFileType[] = [];
-    let name = PathExt.basename(path);
+    const fts: DocumentRegistry.IFileType[] = [];
+    const name = PathExt.basename(path);
 
     // Look for a pattern match first.
     let ft = find(this._fileTypes, ft => {
-      return ft.pattern && ft.pattern.match(name) !== null;
+      return !!(ft.pattern && ft.pattern.match(name) !== null);
     });
     if (ft) {
       fts.push(ft);
@@ -604,15 +683,18 @@ export class DocumentRegistry implements IDisposable {
     [key: string]: DocumentRegistry.WidgetFactory;
   } = Object.create(null);
   private _defaultWidgetFactory = '';
+  private _defaultWidgetFactoryOverrides: {
+    [key: string]: string;
+  } = Object.create(null);
   private _defaultWidgetFactories: { [key: string]: string } = Object.create(
     null
   );
   private _defaultRenderedWidgetFactories: {
     [key: string]: string;
   } = Object.create(null);
-  private _widgetFactoryExtensions: { [key: string]: string[] } = Object.create(
-    null
-  );
+  private _widgetFactoriesForFileType: {
+    [key: string]: string[];
+  } = Object.create(null);
   private _fileTypes: DocumentRegistry.IFileType[] = [];
   private _extenders: {
     [key: string]: DocumentRegistry.WidgetExtension[];
@@ -713,7 +795,7 @@ export namespace DocumentRegistry {
     /**
      * Serialize the model to JSON.
      */
-    toJSON(): JSONValue;
+    toJSON(): PartialJSONValue;
 
     /**
      * Deserialize the model from JSON.
@@ -721,7 +803,7 @@ export namespace DocumentRegistry {
      * #### Notes
      * Should emit a [contentChanged] signal.
      */
-    fromJSON(value: any): void;
+    fromJSON(value: ReadonlyPartialJSONValue): void;
 
     /**
      * Initialize model state after initial data load.
@@ -768,9 +850,9 @@ export namespace DocumentRegistry {
     readonly model: T;
 
     /**
-     * The client session object associated with the context.
+     * The session context object associated with the context.
      */
-    readonly session: IClientSession;
+    readonly sessionContext: ISessionContext;
 
     /**
      * The current path associated with the document.
@@ -817,6 +899,11 @@ export namespace DocumentRegistry {
      * Save the document to a different path chosen by the user.
      */
     saveAs(): Promise<void>;
+
+    /**
+     * Save the document to a different path chosen by the user.
+     */
+    download(): Promise<void>;
 
     /**
      * Revert the document contents to disk contents.
@@ -990,10 +1077,12 @@ export namespace DocumentRegistry {
     /**
      * Create a new widget given a context.
      *
+     * @param source - A widget to clone
+     *
      * #### Notes
      * It should emit the [widgetCreated] signal with the new widget.
      */
-    createNew(context: IContext<U>): T;
+    createNew(context: IContext<U>, source?: T): T;
   }
 
   /**
@@ -1091,6 +1180,11 @@ export namespace DocumentRegistry {
     readonly pattern?: string;
 
     /**
+     * The icon for the file type.
+     */
+    readonly icon?: LabIcon;
+
+    /**
      * The icon class name for the file type.
      */
     readonly iconClass?: string;
@@ -1118,8 +1212,6 @@ export namespace DocumentRegistry {
     name: 'default',
     extensions: [],
     mimeTypes: [],
-    iconClass: 'jp-MaterialIcon jp-FileIcon',
-    iconLabel: '',
     contentType: 'file',
     fileFormat: 'text'
   };
@@ -1140,7 +1232,7 @@ export namespace DocumentRegistry {
     /**
      * The name of the item or the widget factory being extended.
      */
-    readonly name: string;
+    readonly name?: string;
 
     /**
      * Whether the item was added or removed.
@@ -1155,7 +1247,8 @@ export namespace DocumentRegistry {
     ...fileTypeDefaults,
     name: 'text',
     mimeTypes: ['text/plain'],
-    extensions: ['.txt']
+    extensions: ['.txt'],
+    icon: fileIcon
   };
 
   /**
@@ -1169,7 +1262,7 @@ export namespace DocumentRegistry {
     extensions: ['.ipynb'],
     contentType: 'notebook',
     fileFormat: 'json',
-    iconClass: 'jp-MaterialIcon jp-NotebookIcon'
+    icon: notebookIcon
   };
 
   /**
@@ -1181,7 +1274,7 @@ export namespace DocumentRegistry {
     extensions: [],
     mimeTypes: ['text/directory'],
     contentType: 'directory',
-    iconClass: 'jp-MaterialIcon jp-OpenFolderIcon'
+    icon: folderIcon
   };
 
   /**
@@ -1196,56 +1289,56 @@ export namespace DocumentRegistry {
       displayName: 'Markdown File',
       extensions: ['.md'],
       mimeTypes: ['text/markdown'],
-      iconClass: 'jp-MaterialIcon jp-MarkdownIcon'
+      icon: markdownIcon
     },
     {
       name: 'python',
       displayName: 'Python File',
       extensions: ['.py'],
       mimeTypes: ['text/x-python'],
-      iconClass: 'jp-MaterialIcon jp-PythonIcon'
+      icon: pythonIcon
     },
     {
       name: 'json',
       displayName: 'JSON File',
       extensions: ['.json'],
       mimeTypes: ['application/json'],
-      iconClass: 'jp-MaterialIcon jp-JSONIcon'
+      icon: jsonIcon
     },
     {
       name: 'csv',
       displayName: 'CSV File',
       extensions: ['.csv'],
       mimeTypes: ['text/csv'],
-      iconClass: 'jp-MaterialIcon jp-SpreadsheetIcon'
+      icon: spreadsheetIcon
     },
     {
       name: 'tsv',
       displayName: 'TSV File',
       extensions: ['.tsv'],
       mimeTypes: ['text/csv'],
-      iconClass: 'jp-MaterialIcon jp-SpreadsheetIcon'
+      icon: spreadsheetIcon
     },
     {
       name: 'r',
       displayName: 'R File',
       mimeTypes: ['text/x-rsrc'],
       extensions: ['.r'],
-      iconClass: 'jp-MaterialIcon jp-RKernelIcon'
+      icon: rKernelIcon
     },
     {
       name: 'yaml',
       displayName: 'YAML File',
       mimeTypes: ['text/x-yaml', 'text/yaml'],
       extensions: ['.yaml', '.yml'],
-      iconClass: 'jp-MaterialIcon jp-YamlIcon'
+      icon: yamlIcon
     },
     {
       name: 'svg',
       displayName: 'Image',
       mimeTypes: ['image/svg+xml'],
       extensions: ['.svg'],
-      iconClass: 'jp-MaterialIcon jp-ImageIcon',
+      icon: imageIcon,
       fileFormat: 'base64'
     },
     {
@@ -1253,7 +1346,7 @@ export namespace DocumentRegistry {
       displayName: 'Image',
       mimeTypes: ['image/tiff'],
       extensions: ['.tif', '.tiff'],
-      iconClass: 'jp-MaterialIcon jp-ImageIcon',
+      icon: imageIcon,
       fileFormat: 'base64'
     },
     {
@@ -1261,7 +1354,7 @@ export namespace DocumentRegistry {
       displayName: 'Image',
       mimeTypes: ['image/jpeg'],
       extensions: ['.jpg', '.jpeg'],
-      iconClass: 'jp-MaterialIcon jp-ImageIcon',
+      icon: imageIcon,
       fileFormat: 'base64'
     },
     {
@@ -1269,7 +1362,7 @@ export namespace DocumentRegistry {
       displayName: 'Image',
       mimeTypes: ['image/gif'],
       extensions: ['.gif'],
-      iconClass: 'jp-MaterialIcon jp-ImageIcon',
+      icon: imageIcon,
       fileFormat: 'base64'
     },
     {
@@ -1277,7 +1370,7 @@ export namespace DocumentRegistry {
       displayName: 'Image',
       mimeTypes: ['image/png'],
       extensions: ['.png'],
-      iconClass: 'jp-MaterialIcon jp-ImageIcon',
+      icon: imageIcon,
       fileFormat: 'base64'
     },
     {
@@ -1285,7 +1378,7 @@ export namespace DocumentRegistry {
       displayName: 'Image',
       mimeTypes: ['image/bmp'],
       extensions: ['.bmp'],
-      iconClass: 'jp-MaterialIcon jp-ImageIcon',
+      icon: imageIcon,
       fileFormat: 'base64'
     }
   ];
@@ -1337,9 +1430,9 @@ namespace Private {
    * Dotted filenames (e.g. `".table.json"` are allowed).
    */
   export function extname(path: string): string {
-    let parts = PathExt.basename(path).split('.');
+    const parts = PathExt.basename(path).split('.');
     parts.shift();
-    let ext = '.' + parts.join('.');
+    const ext = '.' + parts.join('.');
     return ext.toLowerCase();
   }
   /**

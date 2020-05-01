@@ -1,17 +1,21 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
 import { AttachmentsResolver } from '@jupyterlab/attachments';
 
-import { IClientSession } from '@jupyterlab/apputils';
+import { ISessionContext } from '@jupyterlab/apputils';
 
-import { IChangedArgs, ActivityMonitor } from '@jupyterlab/coreutils';
+import { IChangedArgs, ActivityMonitor, URLExt } from '@jupyterlab/coreutils';
 
 import { CodeEditor, CodeEditorWrapper } from '@jupyterlab/codeeditor';
 
-import { IObservableMap } from '@jupyterlab/observables';
+import { DirListing } from '@jupyterlab/filebrowser';
+
+import * as nbformat from '@jupyterlab/nbformat';
+
+import { IObservableMap, IObservableJSON } from '@jupyterlab/observables';
 
 import {
   OutputArea,
@@ -25,16 +29,27 @@ import {
 import {
   IRenderMime,
   MimeModel,
-  RenderMimeRegistry
+  IRenderMimeRegistry,
+  imageRendererFactory
 } from '@jupyterlab/rendermime';
 
-import { KernelMessage } from '@jupyterlab/services';
+import { KernelMessage, Kernel } from '@jupyterlab/services';
 
-import { JSONValue, PromiseDelegate, JSONObject } from '@phosphor/coreutils';
+import {
+  JSONValue,
+  PromiseDelegate,
+  JSONObject,
+  UUID,
+  PartialJSONValue
+} from '@lumino/coreutils';
 
-import { Message } from '@phosphor/messaging';
+import { some, filter, toArray } from '@lumino/algorithm';
 
-import { PanelLayout, Panel, Widget } from '@phosphor/widgets';
+import { IDragEvent } from '@lumino/dragdrop';
+
+import { Message } from '@lumino/messaging';
+
+import { PanelLayout, Panel, Widget } from '@lumino/widgets';
 
 import { InputCollapser, OutputCollapser } from './collapser';
 
@@ -48,6 +63,7 @@ import {
 import { InputArea, IInputPrompt, InputPrompt } from './inputarea';
 
 import {
+  IAttachmentsCellModel,
   ICellModel,
   ICodeCellModel,
   IMarkdownCellModel,
@@ -143,7 +159,12 @@ const DEFAULT_MARKDOWN_TEXT = 'Type Markdown and LaTeX: $ α^2 $';
  */
 const RENDER_TIMEOUT = 1000;
 
-/******************************************************************************
+/**
+ * The mime type for a rich contents drag object.
+ */
+const CONTENTS_MIME_RICH = 'application/x-jupyter-icontentsrich';
+
+/** ****************************************************************************
  * Cell
  ******************************************************************************/
 
@@ -157,22 +178,22 @@ export class Cell extends Widget {
   constructor(options: Cell.IOptions) {
     super();
     this.addClass(CELL_CLASS);
-    let model = (this._model = options.model);
-    let contentFactory = (this.contentFactory =
+    const model = (this._model = options.model);
+    const contentFactory = (this.contentFactory =
       options.contentFactory || Cell.defaultContentFactory);
     this.layout = new PanelLayout();
 
     // Header
-    let header = contentFactory.createCellHeader();
+    const header = contentFactory.createCellHeader();
     header.addClass(CELL_HEADER_CLASS);
     (this.layout as PanelLayout).addWidget(header);
 
     // Input
-    let inputWrapper = (this._inputWrapper = new Panel());
+    const inputWrapper = (this._inputWrapper = new Panel());
     inputWrapper.addClass(CELL_INPUT_WRAPPER_CLASS);
-    let inputCollapser = new InputCollapser();
+    const inputCollapser = new InputCollapser();
     inputCollapser.addClass(CELL_INPUT_COLLAPSER_CLASS);
-    let input = (this._input = new InputArea({
+    const input = (this._input = new InputArea({
       model,
       contentFactory,
       updateOnShow: options.updateEditorOnShow
@@ -187,7 +208,7 @@ export class Cell extends Widget {
     });
 
     // Footer
-    let footer = this.contentFactory.createCellFooter();
+    const footer = this.contentFactory.createCellFooter();
     footer.addClass(CELL_FOOTER_CLASS);
     (this.layout as PanelLayout).addWidget(footer);
 
@@ -195,7 +216,7 @@ export class Cell extends Widget {
     if (options.editorConfig) {
       Object.keys(options.editorConfig).forEach(
         (key: keyof CodeEditor.IConfig) => {
-          this.editor.setOption(key, options.editorConfig[key]);
+          this.editor.setOption(key, options.editorConfig?.[key] ?? null);
         }
       );
     }
@@ -228,7 +249,7 @@ export class Cell extends Widget {
     if (!this._inputHidden) {
       return this._input.promptNode;
     } else {
-      return (this._inputPlaceholder.node as HTMLElement)
+      return (this._inputPlaceholder!.node as HTMLElement)
         .firstElementChild as HTMLElement;
     }
   }
@@ -330,7 +351,7 @@ export class Cell extends Widget {
     if (this._inputHidden === value) {
       return;
     }
-    let layout = this._inputWrapper.layout as PanelLayout;
+    const layout = this._inputWrapper.layout as PanelLayout;
     if (value) {
       this._input.parent = null;
       layout.addWidget(this._inputPlaceholder);
@@ -426,7 +447,7 @@ export class Cell extends Widget {
    * Clone the cell, using the same model.
    */
   clone(): Cell {
-    let constructor = this.constructor as typeof Cell;
+    const constructor = this.constructor as typeof Cell;
     return new constructor({
       model: this.model,
       contentFactory: this.contentFactory
@@ -441,10 +462,10 @@ export class Cell extends Widget {
     if (this.isDisposed) {
       return;
     }
-    this._input = null;
-    this._model = null;
-    this._inputWrapper = null;
-    this._inputPlaceholder = null;
+    this._input = null!;
+    this._model = null!;
+    this._inputWrapper = null!;
+    this._inputPlaceholder = null!;
     super.dispose();
   }
 
@@ -488,8 +509,8 @@ export class Cell extends Widget {
    * Handle changes in the metadata.
    */
   protected onMetadataChanged(
-    model: IObservableMap<JSONValue>,
-    args: IObservableMap.IChangedArgs<JSONValue>
+    model: IObservableJSON,
+    args: IObservableMap.IChangedArgs<PartialJSONValue | undefined>
   ): void {
     switch (args.key) {
       case 'jupyter':
@@ -508,11 +529,11 @@ export class Cell extends Widget {
   }
 
   private _readOnly = false;
-  private _model: ICellModel = null;
+  private _model: ICellModel;
   private _inputHidden = false;
-  private _input: InputArea = null;
-  private _inputWrapper: Widget = null;
-  private _inputPlaceholder: InputPlaceholder = null;
+  private _input: InputArea;
+  private _inputWrapper: Widget;
+  private _inputPlaceholder: InputPlaceholder;
   private _syncCollapse = false;
   private _syncEditable = false;
 }
@@ -625,7 +646,7 @@ export namespace Cell {
       return new Stdin(options);
     }
 
-    private _editorFactory: CodeEditor.Factory = null;
+    private _editorFactory: CodeEditor.Factory;
   }
 
   /**
@@ -652,7 +673,7 @@ export namespace Cell {
   export const defaultContentFactory = new ContentFactory();
 }
 
-/******************************************************************************
+/** ****************************************************************************
  * CodeCell
  ******************************************************************************/
 
@@ -668,16 +689,16 @@ export class CodeCell extends Cell {
     this.addClass(CODE_CELL_CLASS);
 
     // Only save options not handled by parent constructor.
-    let rendermime = (this._rendermime = options.rendermime);
-    let contentFactory = this.contentFactory;
-    let model = this.model;
+    const rendermime = (this._rendermime = options.rendermime);
+    const contentFactory = this.contentFactory;
+    const model = this.model;
 
     // Insert the output before the cell footer.
-    let outputWrapper = (this._outputWrapper = new Panel());
+    const outputWrapper = (this._outputWrapper = new Panel());
     outputWrapper.addClass(CELL_OUTPUT_WRAPPER_CLASS);
-    let outputCollapser = new OutputCollapser();
+    const outputCollapser = new OutputCollapser();
     outputCollapser.addClass(CELL_OUTPUT_COLLAPSER_CLASS);
-    let output = (this._output = new OutputArea({
+    const output = (this._output = new OutputArea({
       model: model.outputs,
       rendermime,
       contentFactory: contentFactory
@@ -737,7 +758,7 @@ export class CodeCell extends Cell {
     if (this._outputHidden === value) {
       return;
     }
-    let layout = this._outputWrapper.layout as PanelLayout;
+    const layout = this._outputWrapper.layout as PanelLayout;
     if (value) {
       layout.removeWidget(this._output);
       layout.addWidget(this._outputPlaceholder);
@@ -888,7 +909,7 @@ export class CodeCell extends Cell {
    * Clone the cell, using the same model.
    */
   clone(): CodeCell {
-    let constructor = this.constructor as typeof CodeCell;
+    const constructor = this.constructor as typeof CodeCell;
     return new constructor({
       model: this.model,
       contentFactory: this.contentFactory,
@@ -901,7 +922,7 @@ export class CodeCell extends Cell {
    */
   cloneOutputArea(): OutputArea {
     return new SimplifiedOutputArea({
-      model: this.model.outputs,
+      model: this.model.outputs!,
       contentFactory: this.contentFactory,
       rendermime: this._rendermime
     });
@@ -918,10 +939,10 @@ export class CodeCell extends Cell {
       this._outputLengthHandler,
       this
     );
-    this._rendermime = null;
-    this._output = null;
-    this._outputWrapper = null;
-    this._outputPlaceholder = null;
+    this._rendermime = null!;
+    this._output = null!;
+    this._outputWrapper = null!;
+    this._outputPlaceholder = null!;
     super.dispose();
   }
 
@@ -942,7 +963,7 @@ export class CodeCell extends Cell {
    * Handle changes in the metadata.
    */
   protected onMetadataChanged(
-    model: IObservableMap<JSONValue>,
+    model: IObservableJSON,
     args: IObservableMap.IChangedArgs<JSONValue>
   ): void {
     if (this._savingMetadata) {
@@ -970,16 +991,16 @@ export class CodeCell extends Cell {
    * Handle changes in the number of outputs in the output area.
    */
   private _outputLengthHandler(sender: OutputArea, args: number) {
-    let force = args === 0 ? true : false;
+    const force = args === 0 ? true : false;
     this.toggleClass(NO_OUTPUTS_CLASS, force);
   }
 
-  private _rendermime: RenderMimeRegistry = null;
+  private _rendermime: IRenderMimeRegistry;
   private _outputHidden = false;
   private _outputsScrolled: boolean;
-  private _outputWrapper: Widget = null;
-  private _outputPlaceholder: OutputPlaceholder = null;
-  private _output: OutputArea = null;
+  private _outputWrapper: Widget;
+  private _outputPlaceholder: OutputPlaceholder;
+  private _output: OutputArea;
   private _syncScrolled = false;
   private _savingMetadata = false;
 }
@@ -1000,47 +1021,355 @@ export namespace CodeCell {
     /**
      * The mime renderer for the cell widget.
      */
-    rendermime: RenderMimeRegistry;
+    rendermime: IRenderMimeRegistry;
   }
 
   /**
    * Execute a cell given a client session.
    */
-  export function execute(
+  export async function execute(
     cell: CodeCell,
-    session: IClientSession,
+    sessionContext: ISessionContext,
     metadata?: JSONObject
-  ): Promise<KernelMessage.IExecuteReplyMsg> {
-    let model = cell.model;
-    let code = model.value.text;
-    if (!code.trim() || !session.kernel) {
-      model.executionCount = null;
-      model.outputs.clear();
-      return Promise.resolve(void 0);
+  ): Promise<KernelMessage.IExecuteReplyMsg | void> {
+    const model = cell.model;
+    const code = model.value.text;
+    if (!code.trim() || !sessionContext.session?.kernel) {
+      model.clearExecution();
+      return;
     }
-
-    let cellId = { cellId: model.id };
-    metadata = { ...metadata, ...cellId };
-    model.executionCount = null;
+    const cellId = { cellId: model.id };
+    metadata = {
+      ...model.metadata.toJSON(),
+      ...metadata,
+      ...cellId
+    };
+    const { recordTiming } = metadata;
+    model.clearExecution();
     cell.outputHidden = false;
     cell.setPrompt('*');
     model.trusted = true;
-
-    return OutputArea.execute(code, cell.outputArea, session, metadata)
-      .then(msg => {
-        model.executionCount = msg.content.execution_count;
-        return msg;
-      })
-      .catch(e => {
-        if (e.message === 'Canceled') {
-          cell.setPrompt('');
+    let future:
+      | Kernel.IFuture<
+          KernelMessage.IExecuteRequestMsg,
+          KernelMessage.IExecuteReplyMsg
+        >
+      | undefined;
+    try {
+      const msgPromise = OutputArea.execute(
+        code,
+        cell.outputArea,
+        sessionContext,
+        metadata
+      );
+      // cell.outputArea.future assigned synchronously in `execute`
+      if (recordTiming) {
+        const recordTimingHook = (msg: KernelMessage.IIOPubMessage) => {
+          let label: string;
+          switch (msg.header.msg_type) {
+            case 'status':
+              label = `status.${
+                (msg as KernelMessage.IStatusMsg).content.execution_state
+              }`;
+              break;
+            case 'execute_input':
+              label = 'execute_input';
+              break;
+            default:
+              return true;
+          }
+          const value = msg.header.date;
+          if (!value) {
+            return true;
+          }
+          const timingInfo: any = Object.assign(
+            {},
+            model.metadata.get('execution')
+          );
+          timingInfo[`iopub.${label}`] = value;
+          model.metadata.set('execution', timingInfo);
+          return true;
+        };
+        cell.outputArea.future.registerMessageHook(recordTimingHook);
+      } else {
+        model.metadata.delete('execution');
+      }
+      // Save this execution's future so we can compare in the catch below.
+      future = cell.outputArea.future;
+      const msg = (await msgPromise)!;
+      model.executionCount = msg.content.execution_count;
+      const started = msg.metadata.started as string;
+      if (recordTiming && started) {
+        const timingInfo = Object.assign(
+          {},
+          model.metadata.get('execution') as any
+        );
+        if (started) {
+          timingInfo['shell.execute_reply.started'] = started;
         }
-        throw e;
-      });
+        const date = msg.header.date as string;
+        if (date) {
+          timingInfo['shell.execute_reply'] = date;
+        }
+        model.metadata.set('execution', timingInfo);
+      }
+      return msg;
+    } catch (e) {
+      // If we started executing, and the cell is still indicating this
+      // execution, clear the prompt.
+      if (future && !cell.isDisposed && cell.outputArea.future === future) {
+        cell.setPrompt('');
+      }
+      throw e;
+    }
   }
 }
 
-/******************************************************************************
+/**
+ * `AttachmentsCell` - A base class for a cell widget that allows
+ *  attachments to be drag/drop'd or pasted onto it
+ */
+export abstract class AttachmentsCell extends Cell {
+  /**
+   * Handle the DOM events for the widget.
+   *
+   * @param event - The DOM event sent to the widget.
+   *
+   * #### Notes
+   * This method implements the DOM `EventListener` interface and is
+   * called in response to events on the notebook panel's node. It should
+   * not be called directly by user code.
+   */
+  handleEvent(event: Event): void {
+    switch (event.type) {
+      case 'paste':
+        this._evtPaste(event as ClipboardEvent);
+        break;
+      case 'dragenter':
+        event.preventDefault();
+        break;
+      case 'dragover':
+        event.preventDefault();
+        break;
+      case 'drop':
+        this._evtNativeDrop(event as DragEvent);
+        break;
+      case 'lm-dragover':
+        this._evtDragOver(event as IDragEvent);
+        break;
+      case 'lm-drop':
+        this._evtDrop(event as IDragEvent);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Modify the cell source to include a reference to the attachment.
+   */
+  protected abstract updateCellSourceWithAttachment(
+    attachmentName: string,
+    URI?: string
+  ): void;
+
+  /**
+   * Handle `after-attach` messages for the widget.
+   */
+  protected onAfterAttach(msg: Message): void {
+    super.onAfterAttach(msg);
+    const node = this.node;
+    node.addEventListener('lm-dragover', this);
+    node.addEventListener('lm-drop', this);
+    node.addEventListener('dragenter', this);
+    node.addEventListener('dragover', this);
+    node.addEventListener('drop', this);
+    node.addEventListener('paste', this);
+  }
+
+  /**
+   * A message handler invoked on a `'before-detach'`
+   * message
+   */
+  protected onBeforeDetach(msg: Message): void {
+    const node = this.node;
+    node.removeEventListener('drop', this);
+    node.removeEventListener('dragover', this);
+    node.removeEventListener('dragenter', this);
+    node.removeEventListener('paste', this);
+    node.removeEventListener('lm-dragover', this);
+    node.removeEventListener('lm-drop', this);
+  }
+
+  private _evtDragOver(event: IDragEvent) {
+    const supportedMimeType = some(imageRendererFactory.mimeTypes, mimeType => {
+      if (!event.mimeData.hasData(CONTENTS_MIME_RICH)) {
+        return false;
+      }
+      const data = event.mimeData.getData(
+        CONTENTS_MIME_RICH
+      ) as DirListing.IContentsThunk;
+      return data.model.mimetype === mimeType;
+    });
+    if (!supportedMimeType) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.dropAction = event.proposedAction;
+  }
+
+  /**
+   * Handle the `paste` event for the widget
+   */
+  private _evtPaste(event: ClipboardEvent): void {
+    if (event.clipboardData) {
+      const items = event.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type === 'text/plain') {
+          // Skip if this text is the path to a file
+          if (i < items.length - 1 && items[i + 1].kind === 'file') {
+            continue;
+          }
+          items[i].getAsString(text => {
+            this.editor.replaceSelection?.(text);
+          });
+        }
+        this._attachFiles(event.clipboardData.items);
+      }
+    }
+    event.preventDefault();
+  }
+
+  /**
+   * Handle the `drop` event for the widget
+   */
+  private _evtNativeDrop(event: DragEvent): void {
+    if (event.dataTransfer) {
+      this._attachFiles(event.dataTransfer.items);
+    }
+    event.preventDefault();
+  }
+
+  /**
+   * Handle the `'lm-drop'` event for the widget.
+   */
+  private _evtDrop(event: IDragEvent): void {
+    const supportedMimeTypes = toArray(
+      filter(event.mimeData.types(), mimeType => {
+        if (mimeType === CONTENTS_MIME_RICH) {
+          const data = event.mimeData.getData(
+            CONTENTS_MIME_RICH
+          ) as DirListing.IContentsThunk;
+          return (
+            imageRendererFactory.mimeTypes.indexOf(data.model.mimetype) !== -1
+          );
+        }
+        return imageRendererFactory.mimeTypes.indexOf(mimeType) !== -1;
+      })
+    );
+    if (supportedMimeTypes.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.proposedAction === 'none') {
+      event.dropAction = 'none';
+      return;
+    }
+    event.dropAction = 'copy';
+
+    for (const mimeType of supportedMimeTypes) {
+      if (mimeType === CONTENTS_MIME_RICH) {
+        const { model, withContent } = event.mimeData.getData(
+          CONTENTS_MIME_RICH
+        ) as DirListing.IContentsThunk;
+        if (model.type === 'file') {
+          const URI = this._generateURI(model.name);
+          this.updateCellSourceWithAttachment(model.name, URI);
+          void withContent().then(fullModel => {
+            this.model.attachments.set(URI, {
+              [fullModel.mimetype]: fullModel.content
+            });
+          });
+        }
+      } else {
+        // Pure mimetype, no useful name to infer
+        const URI = this._generateURI();
+        this.model.attachments.set(URI, {
+          [mimeType]: event.mimeData.getData(mimeType)
+        });
+        this.updateCellSourceWithAttachment(URI, URI);
+      }
+    }
+  }
+
+  /**
+   * Attaches all DataTransferItems (obtained from
+   * clipboard or native drop events) to the cell
+   */
+  private _attachFiles(items: DataTransferItemList) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        const blob = item.getAsFile();
+        if (blob) {
+          this._attachFile(blob);
+        }
+      }
+    }
+  }
+
+  /**
+   * Takes in a file object and adds it to
+   * the cell attachments
+   */
+  private _attachFile(blob: File) {
+    const reader = new FileReader();
+    reader.onload = evt => {
+      const { href, protocol } = URLExt.parse(reader.result as string);
+      if (protocol !== 'data:') {
+        return;
+      }
+      const dataURIRegex = /([\w+\/\+]+)?(?:;(charset=[\w\d-]*|base64))?,(.*)/;
+      const matches = dataURIRegex.exec(href);
+      if (!matches || matches.length !== 4) {
+        return;
+      }
+      const mimeType = matches[1];
+      const encodedData = matches[3];
+      const bundle: nbformat.IMimeBundle = { [mimeType]: encodedData };
+      const URI = this._generateURI(blob.name);
+
+      if (mimeType.startsWith('image/')) {
+        this.model.attachments.set(URI, bundle);
+        this.updateCellSourceWithAttachment(blob.name, URI);
+      }
+    };
+    reader.onerror = evt => {
+      console.error(`Failed to attach ${blob.name}` + evt);
+    };
+    reader.readAsDataURL(blob);
+  }
+
+  /**
+   * Generates a unique URI for a file
+   * while preserving the file extension.
+   */
+  private _generateURI(name = ''): string {
+    const lastIndex = name.lastIndexOf('.');
+    return lastIndex !== -1
+      ? UUID.uuid4().concat(name.substring(lastIndex))
+      : UUID.uuid4();
+  }
+
+  /**
+   * The model used by the widget.
+   */
+  readonly model: IAttachmentsCellModel;
+}
+
+/** ****************************************************************************
  * MarkdownCell
  ******************************************************************************/
 
@@ -1053,7 +1382,7 @@ export namespace CodeCell {
  * or the input area model changes.  We don't support automatically
  * updating the rendered text in all of these cases.
  */
-export class MarkdownCell extends Cell {
+export class MarkdownCell extends AttachmentsCell {
   /**
    * Construct a Markdown cell widget.
    */
@@ -1063,10 +1392,13 @@ export class MarkdownCell extends Cell {
     // Ensure we can resolve attachments:
     this._rendermime = options.rendermime.clone({
       resolver: new AttachmentsResolver({
-        parent: options.rendermime.resolver,
+        parent: options.rendermime.resolver ?? undefined,
         model: this.model.attachments
       })
     });
+
+    // Stop codemirror handling paste
+    this.editor.setOption('handlePaste', false);
 
     // Throttle the rendering rate of the widget.
     this._monitor = new ActivityMonitor({
@@ -1082,7 +1414,7 @@ export class MarkdownCell extends Cell {
     void this._updateRenderedInput().then(() => {
       this._ready.resolve(void 0);
     });
-    this.renderInput(this._renderer);
+    this.renderInput(this._renderer!);
   }
 
   /**
@@ -1143,6 +1475,18 @@ export class MarkdownCell extends Cell {
   }
 
   /**
+   * Modify the cell source to include a reference to the attachment.
+   */
+  protected updateCellSourceWithAttachment(
+    attachmentName: string,
+    URI?: string
+  ) {
+    const textToBeAppended = `![${attachmentName}](attachment:${URI ??
+      attachmentName})`;
+    this.editor.replaceSelection?.(textToBeAppended);
+  }
+
+  /**
    * Handle the rendered state.
    */
   private _handleRendered(): void {
@@ -1152,7 +1496,7 @@ export class MarkdownCell extends Cell {
       // TODO: It would be nice for the cell to provide a way for
       // its consumers to hook into when the rendering is done.
       void this._updateRenderedInput();
-      this.renderInput(this._renderer);
+      this.renderInput(this._renderer!);
     }
   }
 
@@ -1160,11 +1504,11 @@ export class MarkdownCell extends Cell {
    * Update the rendered input.
    */
   private _updateRenderedInput(): Promise<void> {
-    let model = this.model;
-    let text = (model && model.value.text) || DEFAULT_MARKDOWN_TEXT;
+    const model = this.model;
+    const text = (model && model.value.text) || DEFAULT_MARKDOWN_TEXT;
     // Do not re-render if the text has not changed.
     if (text !== this._prevText) {
-      let mimeModel = new MimeModel({ data: { 'text/markdown': text } });
+      const mimeModel = new MimeModel({ data: { 'text/markdown': text } });
       if (!this._renderer) {
         this._renderer = this._rendermime.createRenderer('text/markdown');
         this._renderer.addClass(MARKDOWN_OUTPUT_CLASS);
@@ -1179,7 +1523,7 @@ export class MarkdownCell extends Cell {
    * Clone the cell, using the same model.
    */
   clone(): MarkdownCell {
-    let constructor = this.constructor as typeof MarkdownCell;
+    const constructor = this.constructor as typeof MarkdownCell;
     return new constructor({
       model: this.model,
       contentFactory: this.contentFactory,
@@ -1187,9 +1531,9 @@ export class MarkdownCell extends Cell {
     });
   }
 
-  private _monitor: ActivityMonitor<any, any> = null;
-  private _renderer: IRenderMime.IRenderer = null;
-  private _rendermime: RenderMimeRegistry;
+  private _monitor: ActivityMonitor<ICellModel, void>;
+  private _renderer: IRenderMime.IRenderer | null = null;
+  private _rendermime: IRenderMimeRegistry;
   private _rendered = true;
   private _prevText = '';
   private _ready = new PromiseDelegate<void>();
@@ -1211,11 +1555,11 @@ export namespace MarkdownCell {
     /**
      * The mime renderer for the cell widget.
      */
-    rendermime: RenderMimeRegistry;
+    rendermime: IRenderMimeRegistry;
   }
 }
 
-/******************************************************************************
+/** ****************************************************************************
  * RawCell
  ******************************************************************************/
 
@@ -1235,7 +1579,7 @@ export class RawCell extends Cell {
    * Clone the cell, using the same model.
    */
   clone(): RawCell {
-    let constructor = this.constructor as typeof RawCell;
+    const constructor = this.constructor as typeof RawCell;
     return new constructor({
       model: this.model,
       contentFactory: this.contentFactory

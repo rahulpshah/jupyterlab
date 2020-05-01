@@ -5,17 +5,17 @@ import { Toolbar, CommandToolbarButton } from '@jupyterlab/apputils';
 
 import { CodeEditor, CodeEditorWrapper } from '@jupyterlab/codeeditor';
 
-import { ISettingRegistry } from '@jupyterlab/coreutils';
+import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 
-import { RenderMimeRegistry } from '@jupyterlab/rendermime';
+import { ISettingRegistry } from '@jupyterlab/settingregistry';
 
-import { CommandRegistry } from '@phosphor/commands';
+import { CommandRegistry } from '@lumino/commands';
 
-import { Message } from '@phosphor/messaging';
+import { Message } from '@lumino/messaging';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
-import { BoxLayout, Widget } from '@phosphor/widgets';
+import { BoxLayout, Widget } from '@lumino/widgets';
 
 import { createInspector } from './inspector';
 
@@ -122,17 +122,10 @@ export class RawEditor extends SplitPanel {
   }
 
   /**
-   * Whether the debug panel is visible.
-   */
-  get isDebugVisible(): boolean {
-    return this._inspector.isVisible;
-  }
-
-  /**
    * Tests whether the settings have been modified and need saving.
    */
   get isDirty(): boolean {
-    return this._user.editor.model.value.text !== this._settings.raw;
+    return this._user.editor.model.value.text !== this._settings?.raw ?? '';
   }
 
   /**
@@ -208,7 +201,7 @@ export class RawEditor extends SplitPanel {
    * Revert the editor back to original settings.
    */
   revert(): void {
-    this._user.editor.model.value.text = this.settings.raw;
+    this._user.editor.model.value.text = this.settings?.raw ?? '';
     this._updateToolbar(false, false);
   }
 
@@ -216,7 +209,7 @@ export class RawEditor extends SplitPanel {
    * Save the contents of the raw editor.
    */
   save(): Promise<void> {
-    if (!this.isDirty) {
+    if (!this.isDirty || !this._settings) {
       return Promise.resolve(undefined);
     }
 
@@ -232,20 +225,6 @@ export class RawEditor extends SplitPanel {
         this._updateToolbar(true, false);
         this._onSaveError(reason);
       });
-  }
-
-  /**
-   * Toggle the debug functionality.
-   */
-  toggleDebug(): void {
-    const inspector = this._inspector;
-
-    if (inspector.isHidden) {
-      inspector.show();
-    } else {
-      inspector.hide();
-    }
-    this._updateToolbar();
   }
 
   /**
@@ -304,8 +283,8 @@ export class RawEditor extends SplitPanel {
     const defaults = this._defaults;
     const user = this._user;
 
-    defaults.editor.model.value.text = settings.annotatedDefaults();
-    user.editor.model.value.text = settings.raw;
+    defaults.editor.model.value.text = settings?.annotatedDefaults() ?? '';
+    user.editor.model.value.text = settings?.raw ?? '';
   }
 
   private _updateToolbar(revert = this._canRevert, save = this._canSave): void {
@@ -313,11 +292,7 @@ export class RawEditor extends SplitPanel {
 
     this._canRevert = revert;
     this._canSave = save;
-    this._commandsChanged.emit([
-      commands.debug,
-      commands.revert,
-      commands.save
-    ]);
+    this._commandsChanged.emit([commands.revert, commands.save]);
   }
 
   private _canRevert = false;
@@ -344,11 +319,6 @@ export namespace RawEditor {
      * The command registry.
      */
     registry: CommandRegistry;
-
-    /**
-     * The debug command ID.
-     */
-    debug: string;
 
     /**
      * The revert command ID.
@@ -388,7 +358,7 @@ export namespace RawEditor {
     /**
      * The optional MIME renderer to use for rendering debug messages.
      */
-    rendermime?: RenderMimeRegistry;
+    rendermime?: IRenderMimeRegistry;
   }
 }
 
@@ -420,14 +390,14 @@ namespace Private {
     commands: RawEditor.ICommandBundle,
     toolbar: Toolbar<Widget>
   ): void {
-    const { debug, registry, revert, save } = commands;
+    const { registry, revert, save } = commands;
 
     toolbar.addItem('spacer', Toolbar.createSpacerItem());
 
     // Note the button order. The rationale here is that no matter what state
     // the toolbar is in, the relative location of the revert button in the
     // toolbar remains the same.
-    [revert, debug, save].forEach(name => {
+    [revert, save].forEach(name => {
       const item = new CommandToolbarButton({ commands: registry, id: name });
       toolbar.addItem(name, item);
     });

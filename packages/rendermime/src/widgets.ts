@@ -1,14 +1,17 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
 
-import { ReadonlyJSONObject } from '@phosphor/coreutils';
+import {
+  ReadonlyJSONObject,
+  ReadonlyPartialJSONObject
+} from '@lumino/coreutils';
 
-import { Message } from '@phosphor/messaging';
+import { Message } from '@lumino/messaging';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import * as renderers from './renderers';
 
@@ -55,7 +58,7 @@ export abstract class RenderedCommon extends Widget
   /**
    * The latexTypesetter.
    */
-  readonly latexTypesetter: IRenderMime.ILatexTypesetter;
+  readonly latexTypesetter: IRenderMime.ILatexTypesetter | null;
 
   /**
    * Render a mime model.
@@ -63,9 +66,20 @@ export abstract class RenderedCommon extends Widget
    * @param model - The mime model to render.
    *
    * @returns A promise which resolves when rendering is complete.
+   *
+   * #### Notes
+   * If the DOM node for this widget already has content, it is emptied
+   * before rendering. Subclasses that do not want this behavior
+   * (if, for instance, they are using DOM diffing), should override
+   * this method and not call `super.renderModel()`.
    */
   async renderModel(model: IRenderMime.IMimeModel): Promise<void> {
     // TODO compare model against old model for early bail?
+
+    // Empty any existing content in the node from previous renders
+    while (this.node.firstChild) {
+      this.node.removeChild(this.node.firstChild);
+    }
 
     // Toggle the trusted class on the widget.
     this.toggleClass('jp-mod-trusted', model.trusted);
@@ -232,7 +246,9 @@ export class RenderedImage extends RenderedCommon {
    * @returns A promise which resolves when rendering is complete.
    */
   render(model: IRenderMime.IMimeModel): Promise<void> {
-    let metadata = model.metadata[this.mimeType] as ReadonlyJSONObject;
+    const metadata = model.metadata[this.mimeType] as
+      | ReadonlyPartialJSONObject
+      | undefined;
     return renderers.renderImage({
       host: this.node,
       mimeType: this.mimeType,
@@ -311,7 +327,9 @@ export class RenderedSVG extends RenderedCommon {
    * @returns A promise which resolves when rendering is complete.
    */
   render(model: IRenderMime.IMimeModel): Promise<void> {
-    let metadata = model.metadata[this.mimeType] as ReadonlyJSONObject;
+    const metadata = model.metadata[this.mimeType] as
+      | ReadonlyJSONObject
+      | undefined;
     return renderers.renderSVG({
       host: this.node,
       source: String(model.data[this.mimeType]),
@@ -354,13 +372,14 @@ export class RenderedText extends RenderedCommon {
   render(model: IRenderMime.IMimeModel): Promise<void> {
     return renderers.renderText({
       host: this.node,
+      sanitizer: this.sanitizer,
       source: String(model.data[this.mimeType])
     });
   }
 }
 
 /**
- * A widget for displaying deprecated JavaScript output.
+ * A widget for displaying JavaScript output.
  */
 export class RenderedJavaScript extends RenderedCommon {
   /**
@@ -383,6 +402,7 @@ export class RenderedJavaScript extends RenderedCommon {
   render(model: IRenderMime.IMimeModel): Promise<void> {
     return renderers.renderText({
       host: this.node,
+      sanitizer: this.sanitizer,
       source: 'JavaScript output is disabled in JupyterLab'
     });
   }

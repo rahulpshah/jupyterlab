@@ -3,11 +3,9 @@
 
 import { Printing } from '@jupyterlab/apputils';
 
-import { Token } from '@phosphor/coreutils';
+import { Panel, PanelLayout, Widget } from '@lumino/widgets';
 
-import { ISignal } from '@phosphor/signaling';
-
-import { Panel, PanelLayout, Widget } from '@phosphor/widgets';
+import { IInspector } from './tokens';
 
 /**
  * The class name added to inspector panels.
@@ -19,73 +17,10 @@ const PANEL_CLASS = 'jp-Inspector';
  */
 const CONTENT_CLASS = 'jp-Inspector-content';
 
-/* tslint:disable */
 /**
- * The inspector panel token.
+ * The class name added to default inspector content.
  */
-export const IInspector = new Token<IInspector>(
-  '@jupyterlab/inspector:IInspector'
-);
-/* tslint:enable */
-
-/**
- * An interface for an inspector.
- */
-export interface IInspector {
-  /**
-   * The source of events the inspector listens for.
-   */
-  source: IInspector.IInspectable | null;
-}
-
-/**
- * A namespace for inspector interfaces.
- */
-export namespace IInspector {
-  /**
-   * The definition of an inspectable source.
-   */
-  export interface IInspectable {
-    /**
-     * A signal emitted when the inspector should clear all items.
-     */
-    cleared: ISignal<any, void>;
-
-    /**
-     * A signal emitted when the inspectable is disposed.
-     */
-    disposed: ISignal<any, void>;
-
-    /**
-     * A signal emitted when an inspector value is generated.
-     */
-    inspected: ISignal<any, IInspectorUpdate>;
-
-    /**
-     * Test whether the inspectable has been disposed.
-     */
-    isDisposed: boolean;
-
-    /**
-     * Indicates whether the inspectable source emits signals.
-     *
-     * #### Notes
-     * The use case for this attribute is to limit the API traffic when no
-     * inspector is visible. It can be modified by the consumer of the source.
-     */
-    standby: boolean;
-  }
-
-  /**
-   * An update value for code inspectors.
-   */
-  export interface IInspectorUpdate {
-    /**
-     * The content being sent to the inspector for display.
-     */
-    content: Widget | null;
-  }
-}
+const DEFAULT_CONTENT_CLASS = 'jp-Inspector-default-content';
 
 /**
  * A panel which contains a set of inspectors.
@@ -95,9 +30,23 @@ export class InspectorPanel extends Panel
   /**
    * Construct an inspector.
    */
-  constructor() {
+  constructor(options: InspectorPanel.IOptions = {}) {
     super();
+
+    if (options.initialContent instanceof Widget) {
+      this._content = options.initialContent;
+    } else if (typeof options.initialContent === 'string') {
+      this._content = InspectorPanel._generateContentWidget(
+        `<p>${options.initialContent}</p>`
+      );
+    } else {
+      this._content = InspectorPanel._generateContentWidget(
+        '<p>Click on a function to see documentation.</p>'
+      );
+    }
+
     this.addClass(PANEL_CLASS);
+    (this.layout as PanelLayout).addWidget(this._content);
   }
 
   /**
@@ -162,17 +111,14 @@ export class InspectorPanel extends Panel
     const { content } = args;
 
     // Update the content of the inspector widget.
-    if (content === this._content) {
+    if (!content || content === this._content) {
       return;
     }
-    if (this._content) {
-      this._content.dispose();
-    }
+    this._content.dispose();
+
     this._content = content;
-    if (content) {
-      content.addClass(CONTENT_CLASS);
-      (this.layout as PanelLayout).addWidget(content);
-    }
+    content.addClass(CONTENT_CLASS);
+    (this.layout as PanelLayout).addWidget(content);
   }
 
   /**
@@ -182,6 +128,24 @@ export class InspectorPanel extends Panel
     this.source = null;
   }
 
-  private _content: Widget | null = null;
+  /**
+   * Generate content widget from string
+   */
+  private static _generateContentWidget(message: string): Widget {
+    const widget = new Widget();
+    widget.node.innerHTML = message;
+    widget.addClass(CONTENT_CLASS);
+    widget.addClass(DEFAULT_CONTENT_CLASS);
+
+    return widget;
+  }
+
+  private _content: Widget;
   private _source: IInspector.IInspectable | null = null;
+}
+
+export namespace InspectorPanel {
+  export interface IOptions {
+    initialContent?: Widget | string | undefined;
+  }
 }

@@ -29,10 +29,10 @@ export namespace Text {
     }
     let charIdx = jsIdx;
     for (let i = 0; i + 1 < text.length && i < jsIdx; i++) {
-      let charCode = text.charCodeAt(i);
+      const charCode = text.charCodeAt(i);
       // check for surrogate pair
       if (charCode >= 0xd800 && charCode <= 0xdbff) {
-        let nextCharCode = text.charCodeAt(i + 1);
+        const nextCharCode = text.charCodeAt(i + 1);
         if (nextCharCode >= 0xdc00 && nextCharCode <= 0xdfff) {
           charIdx--;
           i++;
@@ -58,10 +58,10 @@ export namespace Text {
     }
     let jsIdx = charIdx;
     for (let i = 0; i + 1 < text.length && i < jsIdx; i++) {
-      let charCode = text.charCodeAt(i);
+      const charCode = text.charCodeAt(i);
       // check for surrogate pair
       if (charCode >= 0xd800 && charCode <= 0xdbff) {
-        let nextCharCode = text.charCodeAt(i + 1);
+        const nextCharCode = text.charCodeAt(i + 1);
         if (nextCharCode >= 0xdc00 && nextCharCode <= 0xdfff) {
           jsIdx++;
           i++;
@@ -72,6 +72,27 @@ export namespace Text {
   }
 
   /**
+   * Given a 'snake-case', 'snake_case', 'snake:case', or
+   * 'snake case' string, will return the camel case version: 'snakeCase'.
+   *
+   * @param str: the snake-case input string.
+   *
+   * @param upper: default = false. If true, the first letter of the
+   * returned string will be capitalized.
+   *
+   * @returns the camel case version of the input string.
+   */
+  export function camelCase(str: string, upper: boolean = false): string {
+    return str.replace(/^(\w)|[\s-_:]+(\w)/g, function(match, p1, p2) {
+      if (p2) {
+        return p2.toUpperCase();
+      } else {
+        return upper ? p1.toUpperCase() : p1.toLowerCase();
+      }
+    });
+  }
+
+  /**
    * Given a string, title case the words in the string.
    *
    * @param str: the string to title case.
@@ -79,7 +100,7 @@ export namespace Text {
    * @returns the same string, but with each word capitalized.
    */
   export function titleCase(str: string) {
-    return str
+    return (str || '')
       .toLowerCase()
       .split(' ')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))

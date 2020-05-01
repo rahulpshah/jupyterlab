@@ -5,7 +5,7 @@ import { IEditorMimeTypeService } from '@jupyterlab/codeeditor';
 
 import { ABCWidgetFactory, DocumentRegistry } from '@jupyterlab/docregistry';
 
-import { RenderMimeRegistry } from '@jupyterlab/rendermime';
+import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 
 import { ToolbarItems } from './default-toolbar';
 
@@ -14,6 +14,11 @@ import { INotebookModel } from './model';
 import { NotebookPanel } from './panel';
 
 import { StaticNotebook } from './widget';
+
+import {
+  ISessionContextDialogs,
+  sessionContextDialogs
+} from '@jupyterlab/apputils';
 
 /**
  * A widget factory for notebook panels.
@@ -37,12 +42,13 @@ export class NotebookWidgetFactory extends ABCWidgetFactory<
       options.editorConfig || StaticNotebook.defaultEditorConfig;
     this._notebookConfig =
       options.notebookConfig || StaticNotebook.defaultNotebookConfig;
+    this._sessionDialogs = options.sessionDialogs || sessionContextDialogs;
   }
 
   /*
    * The rendermime instance.
    */
-  readonly rendermime: RenderMimeRegistry;
+  readonly rendermime: IRenderMimeRegistry;
 
   /**
    * The content factory used by the widget factory.
@@ -81,18 +87,21 @@ export class NotebookWidgetFactory extends ABCWidgetFactory<
    * The factory will start the appropriate kernel.
    */
   protected createNewWidget(
-    context: DocumentRegistry.IContext<INotebookModel>
+    context: DocumentRegistry.IContext<INotebookModel>,
+    source?: NotebookPanel
   ): NotebookPanel {
-    let rendermime = this.rendermime.clone({ resolver: context.urlResolver });
-
-    let nbOptions = {
-      rendermime,
+    const nbOptions = {
+      rendermime: source
+        ? source.content.rendermime
+        : this.rendermime.clone({ resolver: context.urlResolver }),
       contentFactory: this.contentFactory,
       mimeTypeService: this.mimeTypeService,
-      editorConfig: this._editorConfig,
-      notebookConfig: this._notebookConfig
+      editorConfig: source ? source.content.editorConfig : this._editorConfig,
+      notebookConfig: source
+        ? source.content.notebookConfig
+        : this._notebookConfig
     };
-    let content = this.contentFactory.createNotebook(nbOptions);
+    const content = this.contentFactory.createNotebook(nbOptions);
 
     return new NotebookPanel({ context, content });
   }
@@ -103,11 +112,12 @@ export class NotebookWidgetFactory extends ABCWidgetFactory<
   protected defaultToolbarFactory(
     widget: NotebookPanel
   ): DocumentRegistry.IToolbarItem[] {
-    return ToolbarItems.getDefaultItems(widget);
+    return ToolbarItems.getDefaultItems(widget, this._sessionDialogs);
   }
 
   private _editorConfig: StaticNotebook.IEditorConfig;
   private _notebookConfig: StaticNotebook.INotebookConfig;
+  private _sessionDialogs: ISessionContextDialogs;
 }
 
 /**
@@ -122,7 +132,7 @@ export namespace NotebookWidgetFactory {
     /*
      * A rendermime instance.
      */
-    rendermime: RenderMimeRegistry;
+    rendermime: IRenderMimeRegistry;
 
     /**
      * A notebook panel content factory.
@@ -143,5 +153,31 @@ export namespace NotebookWidgetFactory {
      * The notebook configuration.
      */
     notebookConfig?: StaticNotebook.INotebookConfig;
+
+    /**
+     * The session context dialogs.
+     */
+    sessionDialogs?: ISessionContextDialogs;
+  }
+
+  /**
+   * The interface for a notebook widget factory.
+   */
+  export interface IFactory
+    extends DocumentRegistry.IWidgetFactory<NotebookPanel, INotebookModel> {
+    /**
+     * A configuration object for cell editor settings.
+     */
+    editorConfig: StaticNotebook.IEditorConfig;
+
+    /**
+     * A configuration object for notebook settings.
+     */
+    notebookConfig: StaticNotebook.INotebookConfig;
+
+    /**
+     * Whether the kernel should be shutdown when the widget is closed.
+     */
+    shutdownOnClose: boolean;
   }
 }

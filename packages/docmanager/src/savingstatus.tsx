@@ -5,13 +5,13 @@ import React from 'react';
 
 import { VDomModel, VDomRenderer } from '@jupyterlab/apputils';
 
-import { IDocumentManager } from './manager';
+import { IDocumentManager } from './tokens';
 
 import { DocumentRegistry } from '@jupyterlab/docregistry';
 
 import { TextItem } from '@jupyterlab/statusbar';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 /**
  * A namespace for SavingStatusComponent statics.
@@ -55,9 +55,7 @@ export class SavingStatus extends VDomRenderer<SavingStatus.Model> {
    * Create a new SavingStatus item.
    */
   constructor(opts: SavingStatus.IOptions) {
-    super();
-    this._docManager = opts.docManager;
-    this.model = new SavingStatus.Model(this._docManager);
+    super(new SavingStatus.Model(opts.docManager));
   }
 
   /**
@@ -70,8 +68,6 @@ export class SavingStatus extends VDomRenderer<SavingStatus.Model> {
       return <SavingStatusComponent fileStatus={this.model.status} />;
     }
   }
-
-  private _docManager: IDocumentManager;
 }
 
 /**

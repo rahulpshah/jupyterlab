@@ -1,5 +1,6 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
+import { WhiteSpaceProperty } from 'csstype';
 
 export default {
   hoverColor: 'var(--jp-layout-color3)',
@@ -7,13 +8,13 @@ export default {
   backgroundColor: 'var(--jp-layout-color2)',
   height: '24px',
   fontSize: 'var(--jp-ui-font-size1)',
+  fontFamily: 'var(--jp-ui-font-family)',
   textColor: 'var(--jp-ui-font-color1)',
   textClickColor: 'white',
   itemMargin: '2px',
   itemPadding: '6px',
-  textIconHalfSpacing: '3px',
   statusBarPadding: '10px',
-  iconImageSize: '18px',
-  iconWidth: '20px',
-  interItemHalfSpacing: '2px' // this amount accounts for half the spacing between items
+  interItemHalfSpacing: '2px', // this amount accounts for half the spacing between items
+  whiteSpace: 'nowrap' as WhiteSpaceProperty,
+  textOverflow: 'ellipsis'
 };

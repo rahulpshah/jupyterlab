@@ -1,4 +1,4 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
@@ -17,19 +17,19 @@ import * as utils from './utils';
 
 // Make sure we have required command line arguments.
 if (process.argv.length < 3) {
-  let msg = '** Must supply a target extension name';
+  const msg = '** Must supply a target extension name';
   process.stderr.write(msg);
   process.exit(1);
 }
 
 // Get the package name or path.
-let target = process.argv[2];
-let basePath = path.resolve('.');
+const target = process.argv[2];
+const basePath = path.resolve('.');
 
 // Get the package.json of the extension.
-let packagePath = path.join(basePath, 'packages', target, 'package.json');
+const packagePath = path.join(basePath, 'packages', target, 'package.json');
 if (!fs.existsSync(packagePath)) {
-  let msg = '** Absolute paths for packages are not allowed.';
+  const msg = '** Absolute paths for packages are not allowed.';
   process.stderr.write(msg);
   process.exit(1);
 }
@@ -37,5 +37,5 @@ if (!fs.existsSync(packagePath)) {
 // Remove the package from the local tree.
 fs.removeSync(path.dirname(packagePath));
 
-// Update the core jupyterlab build dependencies.
-utils.run('npm run integrity');
+// Remove any dependencies on the package (will also run `jlpm integrity`)
+utils.run(`jlpm remove:dependency ${target}`);

@@ -3,9 +3,9 @@
 
 import { Dialog, showDialog } from '@jupyterlab/apputils';
 
-import { Kernel } from '@jupyterlab/services';
-
 import * as React from 'react';
+
+import { KernelSpec } from '@jupyterlab/services';
 
 /**
  * An object representing a companion installation info.
@@ -74,7 +74,7 @@ export type KernelCompanion = {
   /**
    * The kernels that match the install info.
    */
-  kernels: Kernel.ISpecModel[];
+  kernels: KernelSpec.ISpecModel[];
 };
 
 /**
@@ -96,6 +96,29 @@ export interface IJupyterLabPackageData {
   };
 }
 
+// Mapping of manager name to function that take name and gives command
+const managerCommand: { [key: string]: (name: string) => string } = {
+  pip: name => `pip install ${name}`,
+  conda: name => `conda install -c conda-forge ${name}`
+};
+
+function getInstallCommands(info: IInstallInfo) {
+  const commands = Array<string>();
+  for (const manager of info.managers) {
+    const name = info.overrides?.[manager]?.name ?? info.base.name;
+    if (!name) {
+      console.warn(`No package name found for manager ${manager}`);
+      continue;
+    }
+    const command = managerCommand[manager]?.(name);
+    if (!command) {
+      console.warn(`Don't know how to install packages for manager ${manager}`);
+    }
+    commands.push(command);
+  }
+  return commands;
+}
+
 /**
  * Prompt the user what do about companion packages, if present.
  *
@@ -105,43 +128,64 @@ export function presentCompanions(
   kernelCompanions: KernelCompanion[],
   serverCompanion: IInstallInfo | undefined
 ): Promise<boolean> {
-  let entries = [];
+  const entries = [];
   if (serverCompanion) {
     entries.push(
-      <p>
+      <p key="server-companion">
         This package has indicated that it needs a corresponding server
-        extension:
-        <code> {serverCompanion.base.name!}</code>
+        extension. Please contact your Administrator to update the server with
+        one of the following commands:
+        {getInstallCommands(serverCompanion).map(command => {
+          return (
+            <p key={command}>
+              <code>{command}</code>
+            </p>
+          );
+        })}
       </p>
     );
   }
   if (kernelCompanions.length > 0) {
     entries.push(
-      <p>
+      <p key={'kernel-companion'}>
         This package has indicated that it needs a corresponding package for the
         kernel.
       </p>
     );
-    for (let entry of kernelCompanions) {
+    for (const [index, entry] of kernelCompanions.entries()) {
       entries.push(
-        <p>
+        <p key={`companion-${index}`}>
           The package
           <code>{entry.kernelInfo.base.name!}</code>, is required by the
           following kernels:
         </p>
       );
-      let kernelEntries = [];
-      for (let kernel of entry.kernels) {
+      const kernelEntries = [];
+      for (const [index, kernel] of entry.kernels.entries()) {
         kernelEntries.push(
-          <li>
+          <li key={`kernels-${index}`}>
             <code>{kernel.display_name}</code>
           </li>
         );
       }
-      entries.push(<ul>{kernelEntries}</ul>);
+      entries.push(<ul key={'kernel-companion-end'}>{kernelEntries}</ul>);
+      entries.push(
+        <p key={`kernel-companion-${index}`}>
+          This package has indicated that it needs a corresponding kernel
+          package. Please contact your Administrator to update the server with
+          one of the following commands:
+          {getInstallCommands(entry.kernelInfo).map(command => {
+            return (
+              <p key={command}>
+                <code>{command}</code>
+              </p>
+            );
+          })}
+        </p>
+      );
     }
   }
-  let body = (
+  const body = (
     <div>
       {entries}
       <p>
@@ -151,14 +195,24 @@ export function presentCompanions(
       </p>
     </div>
   );
+  const hasKernelCompanions = kernelCompanions.length > 0;
+  const hasServerCompanion = !!serverCompanion;
+  let title = '';
+  if (hasKernelCompanions && hasServerCompanion) {
+    title = 'Kernel and Server Companions';
+  } else if (hasKernelCompanions) {
+    title = 'Kernel Companions';
+  } else {
+    title = 'Server Companion';
+  }
   return showDialog({
-    title: 'Kernel companions',
+    title,
     body,
     buttons: [
       Dialog.cancelButton(),
       Dialog.okButton({
         label: 'OK',
-        caption: 'Install the Jupyterlab extension.'
+        caption: 'Install the JupyterLab extension.'
       })
     ]
   }).then(result => {

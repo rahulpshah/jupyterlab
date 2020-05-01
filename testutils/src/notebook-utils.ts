@@ -7,7 +7,7 @@ import { CodeEditorWrapper } from '@jupyterlab/codeeditor';
 
 import { Clipboard } from '@jupyterlab/apputils';
 
-import { nbformat } from '@jupyterlab/coreutils';
+import * as nbformat from '@jupyterlab/nbformat';
 
 import { Context } from '@jupyterlab/docregistry';
 
@@ -28,7 +28,7 @@ import { defaultRenderMime as localRendermime } from './rendermime';
 /**
  * Stub for the require() function.
  */
-declare var require: any;
+declare let require: any;
 
 /**
  * The default notebook content.
@@ -158,7 +158,7 @@ export namespace NBTestUtils {
    * Populate a notebook with default content.
    */
   export function populateNotebook(notebook: Notebook): void {
-    let model = new NotebookModel();
+    const model = new NotebookModel();
     model.fromJSON(DEFAULT_CONTENT);
     notebook.model = model;
   }

@@ -1,4 +1,4 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
@@ -6,6 +6,7 @@
 import * as React from 'react';
 
 import { ReactWidget } from '@jupyterlab/apputils';
+import { ellipsesIcon } from '@jupyterlab/ui-components';
 
 /**
  * The CSS class added to placeholders.
@@ -58,7 +59,7 @@ export abstract class Placeholder extends ReactWidget {
    * Handle the click event.
    */
   protected handleClick(e: React.MouseEvent<HTMLDivElement>): void {
-    let callback = this._callback;
+    const callback = this._callback;
     callback(e);
   }
 
@@ -88,7 +89,12 @@ export class InputPlaceholder extends Placeholder {
         onClick={e => this.handleClick(e)}
         key="content"
       >
-        <div className="jp-MoreHorizIcon" />
+        <ellipsesIcon.react
+          className="jp-MoreHorizIcon"
+          elementPosition="center"
+          height="auto"
+          width="32px"
+        />
       </div>
     ];
   }
@@ -117,7 +123,12 @@ export class OutputPlaceholder extends Placeholder {
         onClick={e => this.handleClick(e)}
         key="content"
       >
-        <div className="jp-MoreHorizIcon" />
+        <ellipsesIcon.react
+          className="jp-MoreHorizIcon"
+          elementPosition="center"
+          height="auto"
+          width="32px"
+        />
       </div>
     ];
   }

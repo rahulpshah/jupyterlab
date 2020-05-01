@@ -3,6 +3,7 @@
 const fetchMod = ((window as any).fetch = require('node-fetch')); // tslint:disable-line
 (window as any).Request = fetchMod.Request;
 (window as any).Headers = fetchMod.Headers;
+(window as any).Response = fetchMod.Response;
 
 (global as any).Image = (window as any).Image;
 (global as any).Range = function Range() {
@@ -44,8 +45,9 @@ process.on('unhandledRejection', (error, promise) => {
   console.error('Unhandled promise rejection somewhere in tests');
   if (error) {
     console.error(error);
-    if (error.stack) {
-      console.error(error.stack);
+    const stack = (error as any).stack;
+    if (stack) {
+      console.error(stack);
     }
   }
   promise.catch(err => console.error('promise rejected', err));

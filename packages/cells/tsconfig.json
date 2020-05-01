@@ -22,6 +22,12 @@
       "path": "../coreutils"
     },
     {
+      "path": "../filebrowser"
+    },
+    {
+      "path": "../nbformat"
+    },
+    {
       "path": "../observables"
     },
     {
@@ -32,6 +38,9 @@
     },
     {
       "path": "../services"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

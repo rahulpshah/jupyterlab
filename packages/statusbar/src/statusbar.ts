@@ -1,21 +1,17 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { ArrayExt } from '@phosphor/algorithm';
-
-import { ISignal } from '@phosphor/signaling';
-
-import { Token } from '@phosphor/coreutils';
+import { ArrayExt } from '@lumino/algorithm';
 
 import {
   DisposableDelegate,
   DisposableSet,
   IDisposable
-} from '@phosphor/disposable';
+} from '@lumino/disposable';
 
-import { Message } from '@phosphor/messaging';
+import { Message } from '@lumino/messaging';
 
-import { Widget, Panel, PanelLayout } from '@phosphor/widgets';
+import { Widget, Panel, PanelLayout } from '@lumino/widgets';
 
 import {
   statusBar as barStyle,
@@ -25,65 +21,7 @@ import {
   rightSide as rightSideStyle
 } from './style/statusbar';
 
-// tslint:disable-next-line:variable-name
-export const IStatusBar = new Token<IStatusBar>(
-  '@jupyterlab/statusbar:IStatusBar'
-);
-
-/**
- * Main status bar object which contains all widgets.
- */
-export interface IStatusBar {
-  /**
-   * Register a new status item.
-   *
-   * @param id - a unique id for the status item.
-   *
-   * @param options - The options for how to add the status item.
-   *
-   * @returns an `IDisposable` that can be disposed to remove the item.
-   */
-  registerStatusItem(id: string, statusItem: IStatusBar.IItem): IDisposable;
-}
-
-/**
- * A namespace for status bar statics.
- */
-export namespace IStatusBar {
-  export type Alignment = 'right' | 'left' | 'middle';
-
-  /**
-   * Options for status bar items.
-   */
-  export interface IItem {
-    /**
-     * The item to add to the status bar.
-     */
-    item: Widget;
-
-    /**
-     * Which side to place item.
-     * Permanent items are intended for the right and left side,
-     * with more transient items in the middle.
-     */
-    align?: Alignment;
-
-    /**
-     *  Ordering of Items -- higher rank items are closer to the middle.
-     */
-    rank?: number;
-
-    /**
-     * Whether the item is shown or hidden.
-     */
-    isActive?: () => boolean;
-
-    /**
-     * A signal that is fired when the item active state changes.
-     */
-    activeStateChanged?: ISignal<any, void>;
-  }
-}
+import { IStatusBar } from './tokens';
 
 /**
  * Main status bar object which contains all items.
@@ -93,11 +31,11 @@ export class StatusBar extends Widget implements IStatusBar {
     super();
     this.addClass(barStyle);
 
-    let rootLayout = (this.layout = new PanelLayout());
+    const rootLayout = (this.layout = new PanelLayout());
 
-    let leftPanel = (this._leftSide = new Panel());
-    let middlePanel = (this._middlePanel = new Panel());
-    let rightPanel = (this._rightSide = new Panel());
+    const leftPanel = (this._leftSide = new Panel());
+    const middlePanel = (this._middlePanel = new Panel());
+    const rightPanel = (this._rightSide = new Panel());
 
     leftPanel.addClass(sideStyle);
     leftPanel.addClass(leftSideStyle);
@@ -125,25 +63,28 @@ export class StatusBar extends Widget implements IStatusBar {
     }
 
     // Populate defaults for the optional properties of the status item.
-    statusItem = { ...Private.statusItemDefaults, ...statusItem };
-    const { align, item, rank } = statusItem;
+    const fullStatusItem = {
+      ...Private.statusItemDefaults,
+      ...statusItem
+    } as Private.IFullItem;
+    const { align, item, rank } = fullStatusItem;
 
     // Connect the activeStateChanged signal to refreshing the status item,
     // if the signal was provided.
     const onActiveStateChanged = () => {
       this._refreshItem(id);
     };
-    if (statusItem.activeStateChanged) {
-      statusItem.activeStateChanged.connect(onActiveStateChanged);
+    if (fullStatusItem.activeStateChanged) {
+      fullStatusItem.activeStateChanged.connect(onActiveStateChanged);
     }
 
-    let rankItem = { id, rank };
+    const rankItem = { id, rank };
 
-    statusItem.item.addClass(itemStyle);
-    this._statusItems[id] = statusItem;
+    fullStatusItem.item.addClass(itemStyle);
+    this._statusItems[id] = fullStatusItem;
 
     if (align === 'left') {
-      let insertIndex = this._findInsertIndex(this._leftRankItems, rankItem);
+      const insertIndex = this._findInsertIndex(this._leftRankItems, rankItem);
       if (insertIndex === -1) {
         this._leftSide.addWidget(item);
         this._leftRankItems.push(rankItem);
@@ -152,7 +93,7 @@ export class StatusBar extends Widget implements IStatusBar {
         this._leftSide.insertWidget(insertIndex, item);
       }
     } else if (align === 'right') {
-      let insertIndex = this._findInsertIndex(this._rightRankItems, rankItem);
+      const insertIndex = this._findInsertIndex(this._rightRankItems, rankItem);
       if (insertIndex === -1) {
         this._rightSide.addWidget(item);
         this._rightRankItems.push(rankItem);
@@ -167,8 +108,8 @@ export class StatusBar extends Widget implements IStatusBar {
 
     const disposable = new DisposableDelegate(() => {
       delete this._statusItems[id];
-      if (statusItem.activeStateChanged) {
-        statusItem.activeStateChanged.disconnect(onActiveStateChanged);
+      if (fullStatusItem.activeStateChanged) {
+        fullStatusItem.activeStateChanged.disconnect(onActiveStateChanged);
       }
       item.parent = null;
       item.dispose();
@@ -220,7 +161,7 @@ export class StatusBar extends Widget implements IStatusBar {
 
   private _leftRankItems: Private.IRankItem[] = [];
   private _rightRankItems: Private.IRankItem[] = [];
-  private _statusItems: { [id: string]: IStatusBar.IItem } = {};
+  private _statusItems: { [id: string]: Private.IFullItem } = {};
   private _disposables = new DisposableSet();
   private _leftSide: Panel;
   private _middlePanel: Panel;
@@ -249,4 +190,12 @@ namespace Private {
     id: string;
     rank: number;
   }
+
+  export type DefaultKeys = 'align' | 'rank' | 'isActive';
+
+  /**
+   * Type of statusbar item with defaults filled in.
+   */
+  export type IFullItem = Required<Pick<IStatusBar.IItem, DefaultKeys>> &
+    Omit<IStatusBar.IItem, DefaultKeys>;
 }

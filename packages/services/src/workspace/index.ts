@@ -1,9 +1,11 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { DataConnector, URLExt } from '@jupyterlab/coreutils';
+import { URLExt } from '@jupyterlab/coreutils';
 
-import { ReadonlyJSONObject } from '@phosphor/coreutils';
+import { DataConnector } from '@jupyterlab/statedb';
+
+import { ReadonlyPartialJSONObject } from '@lumino/coreutils';
 
 import { ServerConnection } from '../serverconnection';
 
@@ -22,7 +24,7 @@ export class WorkspaceManager extends DataConnector<Workspace.IWorkspace> {
   constructor(options: WorkspaceManager.IOptions = {}) {
     super();
     this.serverSettings =
-      options.serverSettings || ServerConnection.makeSettings();
+      options.serverSettings ?? ServerConnection.makeSettings();
   }
 
   /**
@@ -39,14 +41,15 @@ export class WorkspaceManager extends DataConnector<Workspace.IWorkspace> {
    */
   async fetch(id: string): Promise<Workspace.IWorkspace> {
     const { serverSettings } = this;
-    const { baseUrl, pageUrl } = serverSettings;
+    const { baseUrl, appUrl } = serverSettings;
     const { makeRequest, ResponseError } = ServerConnection;
-    const base = baseUrl + pageUrl;
+    const base = baseUrl + appUrl;
     const url = Private.url(base, id);
     const response = await makeRequest(url, {}, serverSettings);
 
     if (response.status !== 200) {
-      throw new ResponseError(response);
+      const err = await ResponseError.create(response);
+      throw err;
     }
 
     return response.json();
@@ -59,14 +62,15 @@ export class WorkspaceManager extends DataConnector<Workspace.IWorkspace> {
    */
   async list(): Promise<{ ids: string[]; values: Workspace.IWorkspace[] }> {
     const { serverSettings } = this;
-    const { baseUrl, pageUrl } = serverSettings;
+    const { baseUrl, appUrl } = serverSettings;
     const { makeRequest, ResponseError } = ServerConnection;
-    const base = baseUrl + pageUrl;
+    const base = baseUrl + appUrl;
     const url = Private.url(base, '');
     const response = await makeRequest(url, {}, serverSettings);
 
     if (response.status !== 200) {
-      throw new ResponseError(response);
+      const err = await ResponseError.create(response);
+      throw err;
     }
 
     const result = await response.json();
@@ -83,15 +87,16 @@ export class WorkspaceManager extends DataConnector<Workspace.IWorkspace> {
    */
   async remove(id: string): Promise<void> {
     const { serverSettings } = this;
-    const { baseUrl, pageUrl } = serverSettings;
+    const { baseUrl, appUrl } = serverSettings;
     const { makeRequest, ResponseError } = ServerConnection;
-    const base = baseUrl + pageUrl;
+    const base = baseUrl + appUrl;
     const url = Private.url(base, id);
     const init = { method: 'DELETE' };
     const response = await makeRequest(url, init, serverSettings);
 
     if (response.status !== 204) {
-      throw new ResponseError(response);
+      const err = await ResponseError.create(response);
+      throw err;
     }
   }
 
@@ -106,15 +111,16 @@ export class WorkspaceManager extends DataConnector<Workspace.IWorkspace> {
    */
   async save(id: string, workspace: Workspace.IWorkspace): Promise<void> {
     const { serverSettings } = this;
-    const { baseUrl, pageUrl } = serverSettings;
+    const { baseUrl, appUrl } = serverSettings;
     const { makeRequest, ResponseError } = ServerConnection;
-    const base = baseUrl + pageUrl;
+    const base = baseUrl + appUrl;
     const url = Private.url(base, id);
     const init = { body: JSON.stringify(workspace), method: 'PUT' };
     const response = await makeRequest(url, init, serverSettings);
 
     if (response.status !== 204) {
-      throw new ResponseError(response);
+      const err = await ResponseError.create(response);
+      throw err;
     }
   }
 }
@@ -150,7 +156,7 @@ export namespace Workspace {
     /**
      * The workspace data.
      */
-    data: ReadonlyJSONObject;
+    data: ReadonlyPartialJSONObject;
 
     /**
      * The metadata for a workspace.

@@ -1,51 +1,16 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { IInstanceTracker, InstanceTracker } from '@jupyterlab/apputils';
+import { WidgetTracker } from '@jupyterlab/apputils';
 import { Cell } from '@jupyterlab/cells';
 
-import { Token } from '@phosphor/coreutils';
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
+import { INotebookTracker } from './tokens';
 import { NotebookPanel } from './panel';
 import { Notebook } from './widget';
 
-/**
- * An object that tracks notebook widgets.
- */
-export interface INotebookTracker extends IInstanceTracker<NotebookPanel> {
-  /**
-   * The currently focused cell.
-   *
-   * #### Notes
-   * If there is no cell with the focus, then this value is `null`.
-   */
-  readonly activeCell: Cell;
-
-  /**
-   * A signal emitted when the current active cell changes.
-   *
-   * #### Notes
-   * If there is no cell with the focus, then `null` will be emitted.
-   */
-  readonly activeCellChanged: ISignal<this, Cell>;
-
-  /**
-   * A signal emitted when the selection state changes.
-   */
-  readonly selectionChanged: ISignal<this, void>;
-}
-
-/* tslint:disable */
-/**
- * The notebook tracker token.
- */
-export const INotebookTracker = new Token<INotebookTracker>(
-  '@jupyterlab/notebook:INotebookTracker'
-);
-/* tslint:enable */
-
-export class NotebookTracker extends InstanceTracker<NotebookPanel>
+export class NotebookTracker extends WidgetTracker<NotebookPanel>
   implements INotebookTracker {
   /**
    * The currently focused cell.
@@ -54,8 +19,8 @@ export class NotebookTracker extends InstanceTracker<NotebookPanel>
    * This is a read-only property. If there is no cell with the focus, then this
    * value is `null`.
    */
-  get activeCell(): Cell {
-    let widget = this.currentWidget;
+  get activeCell(): Cell | null {
+    const widget = this.currentWidget;
     if (!widget) {
       return null;
     }
@@ -68,7 +33,7 @@ export class NotebookTracker extends InstanceTracker<NotebookPanel>
    * #### Notes
    * If there is no cell with the focus, then `null` will be emitted.
    */
-  get activeCellChanged(): ISignal<this, Cell> {
+  get activeCellChanged(): ISignal<this, Cell | null> {
     return this._activeCellChanged;
   }
 
@@ -104,7 +69,7 @@ export class NotebookTracker extends InstanceTracker<NotebookPanel>
    */
   protected onCurrentChanged(widget: NotebookPanel): void {
     // Store an internal reference to active cell to prevent false positives.
-    let activeCell = this.activeCell;
+    const activeCell = this.activeCell;
     if (activeCell && activeCell === this._activeCell) {
       return;
     }
@@ -134,6 +99,6 @@ export class NotebookTracker extends InstanceTracker<NotebookPanel>
   }
 
   private _activeCell: Cell | null = null;
-  private _activeCellChanged = new Signal<this, Cell>(this);
+  private _activeCellChanged = new Signal<this, Cell | null>(this);
   private _selectionChanged = new Signal<this, void>(this);
 }

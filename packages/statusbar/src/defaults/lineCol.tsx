@@ -7,7 +7,11 @@ import { VDomRenderer, VDomModel, ReactWidget } from '@jupyterlab/apputils';
 
 import { CodeEditor } from '@jupyterlab/codeeditor';
 
-import { interactiveItem, showPopup, Popup, TextItem } from '..';
+import { lineFormIcon } from '@jupyterlab/ui-components';
+
+import { classes } from 'typestyle/lib';
+
+import { interactiveItem, Popup, showPopup, TextItem } from '..';
 
 import {
   lineFormWrapper,
@@ -15,10 +19,10 @@ import {
   lineFormSearch,
   lineFormWrapperFocusWithin,
   lineFormCaption,
+  lineFormButtonDiv,
+  lineFormButtonIcon,
   lineFormButton
 } from '../style/lineForm';
-
-import { classes } from 'typestyle/lib';
 
 /**
  * A namespace for LineFormComponent statics.
@@ -96,7 +100,7 @@ class LineFormComponent extends React.Component<
           <div
             className={classes(
               lineFormWrapper,
-              'p-lineForm-wrapper',
+              'lm-lineForm-wrapper',
               this.state.hasFocus ? lineFormWrapperFocusWithin : undefined
             )}
           >
@@ -111,12 +115,13 @@ class LineFormComponent extends React.Component<
                 this._textInput = input;
               }}
             />
-
-            <input
-              type="submit"
-              className={classes(lineFormButton, 'jp-StatusItem-line-form')}
-              value=""
-            />
+            <div className={lineFormButtonDiv}>
+              <lineFormIcon.react
+                className={lineFormButtonIcon}
+                elementPosition="center"
+              />
+              <input type="submit" className={lineFormButton} value="" />
+            </div>
           </div>
           <label className={lineFormCaption}>
             Go to line number between 1 and {this.props.maxLine}
@@ -219,8 +224,7 @@ export class LineCol extends VDomRenderer<LineCol.Model> {
    * Construct a new LineCol status item.
    */
   constructor() {
-    super();
-    this.model = new LineCol.Model();
+    super(new LineCol.Model());
     this.addClass(interactiveItem);
   }
 

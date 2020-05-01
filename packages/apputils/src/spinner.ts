@@ -1,11 +1,11 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
-import { Message } from '@phosphor/messaging';
+import { Message } from '@lumino/messaging';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 /**
  * The spinner class.
@@ -18,7 +18,7 @@ export class Spinner extends Widget {
     super();
     this.addClass('jp-Spinner');
     this.node.tabIndex = -1;
-    let content = document.createElement('div');
+    const content = document.createElement('div');
     content.className = 'jp-SpinnerContent';
     this.node.appendChild(content);
   }

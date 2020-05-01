@@ -1,7 +1,7 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { PromiseDelegate, Token } from '@phosphor/coreutils';
+import { PromiseDelegate, Token } from '@lumino/coreutils';
 
 /* tslint:disable */
 /**
@@ -28,6 +28,9 @@ export interface IWindowResolver {
 export class WindowResolver implements IWindowResolver {
   /**
    * The resolved window name.
+   *
+   * #### Notes
+   * If the `resolve` promise has not resolved, the behavior is undefined.
    */
   get name(): string {
     return this._name;
@@ -51,7 +54,7 @@ export class WindowResolver implements IWindowResolver {
     });
   }
 
-  private _name: string | null = null;
+  private _name: string;
 }
 
 /*
@@ -61,7 +64,7 @@ namespace Private {
   /**
    * The internal prefix for private local storage keys.
    */
-  const PREFIX = '@jupyterlab/coreutils:StateDB';
+  const PREFIX = '@jupyterlab/statedb:StateDB';
 
   /**
    * The local storage beacon key.
@@ -85,6 +88,18 @@ namespace Private {
   const WINDOW = `${PREFIX}:window`;
 
   /**
+   * Current beacon request
+   *
+   * #### Notes
+   * We keep track of the current request so that we can ignore our own beacon
+   * requests. This is to work around a bug in Safari, where Safari sometimes
+   * triggers local storage events for changes made by the current tab. See
+   * https://github.com/jupyterlab/jupyterlab/issues/6921#issuecomment-540817283
+   * for more details.
+   */
+  let currentBeaconRequest: string | null = null;
+
+  /**
    * A potential preferred default window name.
    */
   let candidate: string | null = null;
@@ -92,12 +107,12 @@ namespace Private {
   /**
    * The window name promise.
    */
-  let delegate = new PromiseDelegate<string>();
+  const delegate = new PromiseDelegate<string>();
 
   /**
    * The known window names.
    */
-  let known: { [window: string]: null } = {};
+  const known: { [window: string]: null } = {};
 
   /**
    * The window name.
@@ -123,7 +138,11 @@ namespace Private {
       }
 
       // If the beacon was fired, respond with a ping.
-      if (key === BEACON && candidate !== null) {
+      if (
+        key === BEACON &&
+        newValue !== currentBeaconRequest &&
+        candidate !== null
+      ) {
         ping(resolved ? name : candidate);
         return;
       }
@@ -139,7 +158,7 @@ namespace Private {
       known[reported] = null;
 
       // If a reported window name and candidate collide, reject the candidate.
-      if (candidate in known) {
+      if (!candidate || candidate in known) {
         reject();
       }
     });
@@ -148,7 +167,7 @@ namespace Private {
   /**
    * Ping peers with payload.
    */
-  function ping(payload: string): void {
+  function ping(payload: string | null): void {
     if (payload === null) {
       return;
     }
@@ -163,6 +182,7 @@ namespace Private {
    */
   function reject(): void {
     resolved = true;
+    currentBeaconRequest = null;
     delegate.reject(`Window name candidate "${candidate}" already exists`);
   }
 
@@ -192,17 +212,19 @@ namespace Private {
 
       // If the window name has not already been resolved, check one last time
       // to confirm it is not a duplicate before resolving.
-      if (candidate in known) {
+      if (!candidate || candidate in known) {
         return reject();
       }
 
       resolved = true;
+      currentBeaconRequest = null;
       delegate.resolve((name = candidate));
       ping(name);
     }, TIMEOUT);
 
     // Fire the beacon to collect other windows' names.
-    localStorage.setItem(BEACON, `${Math.random()}-${new Date().getTime()}`);
+    currentBeaconRequest = `${Math.random()}-${new Date().getTime()}`;
+    localStorage.setItem(BEACON, currentBeaconRequest);
 
     return delegate.promise;
   }

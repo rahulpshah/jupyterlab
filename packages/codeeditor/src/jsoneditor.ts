@@ -2,12 +2,15 @@
 // Distributed under the terms of the Modified BSD License.
 
 import { IObservableJSON } from '@jupyterlab/observables';
+import { checkIcon, undoIcon } from '@jupyterlab/ui-components';
 
-import { JSONExt, JSONObject } from '@phosphor/coreutils';
-
-import { Message } from '@phosphor/messaging';
-
-import { Widget } from '@phosphor/widgets';
+import {
+  JSONExt,
+  JSONObject,
+  ReadonlyPartialJSONObject
+} from '@lumino/coreutils';
+import { Message } from '@lumino/messaging';
+import { Widget } from '@lumino/widgets';
 
 import { CodeEditor } from './editor';
 
@@ -32,16 +35,6 @@ const HOST_CLASS = 'jp-JSONEditor-host';
 const HEADER_CLASS = 'jp-JSONEditor-header';
 
 /**
- * The class name added to the revert button.
- */
-const REVERT_CLASS = 'jp-JSONEditor-revertButton';
-
-/**
- * The class name added to the commit button.
- */
-const COMMIT_CLASS = 'jp-JSONEditor-commitButton';
-
-/**
  * A widget for editing observable JSON.
  */
 export class JSONEditor extends Widget {
@@ -56,13 +49,16 @@ export class JSONEditor extends Widget {
     this.headerNode = document.createElement('div');
     this.headerNode.className = HEADER_CLASS;
 
-    this.revertButtonNode = document.createElement('span');
-    this.revertButtonNode.className = REVERT_CLASS;
-    this.revertButtonNode.title = 'Revert changes to data';
+    this.revertButtonNode = undoIcon.element({
+      tag: 'span',
+      title: 'Revert changes to data'
+    });
 
-    this.commitButtonNode = document.createElement('span');
-    this.commitButtonNode.className = COMMIT_CLASS;
-    this.commitButtonNode.title = 'Commit changes to data';
+    this.commitButtonNode = checkIcon.element({
+      tag: 'span',
+      title: 'Commit changes to data',
+      marginLeft: '8px'
+    });
 
     this.editorHostNode = document.createElement('div');
     this.editorHostNode.className = HOST_CLASS;
@@ -73,7 +69,7 @@ export class JSONEditor extends Widget {
     this.node.appendChild(this.headerNode);
     this.node.appendChild(this.editorHostNode);
 
-    let model = new CodeEditor.Model();
+    const model = new CodeEditor.Model();
 
     model.value.text = 'No data!';
     model.mimeType = 'application/json';
@@ -168,7 +164,7 @@ export class JSONEditor extends Widget {
    * Handle `after-attach` messages for the widget.
    */
   protected onAfterAttach(msg: Message): void {
-    let node = this.editorHostNode;
+    const node = this.editorHostNode;
     node.addEventListener('blur', this, true);
     node.addEventListener('click', this, true);
     this.revertButtonNode.hidden = true;
@@ -197,7 +193,7 @@ export class JSONEditor extends Widget {
    * Handle `before-detach` messages for the widget.
    */
   protected onBeforeDetach(msg: Message): void {
-    let node = this.editorHostNode;
+    const node = this.editorHostNode;
     node.removeEventListener('blur', this, true);
     node.removeEventListener('click', this, true);
     this.headerNode.removeEventListener('click', this);
@@ -226,7 +222,7 @@ export class JSONEditor extends Widget {
   private _onValueChanged(): void {
     let valid = true;
     try {
-      let value = JSON.parse(this.editor.model.value.text);
+      const value = JSON.parse(this.editor.model.value.text);
       this.removeClass(ERROR_CLASS);
       this._inputDirty =
         !this._changeGuard && !JSONExt.deepEqual(value, this._originalValue);
@@ -253,24 +249,18 @@ export class JSONEditor extends Widget {
    * Handle click events for the buttons.
    */
   private _evtClick(event: MouseEvent): void {
-    let target = event.target as HTMLElement;
-    switch (target) {
-      case this.revertButtonNode:
+    const target = event.target as HTMLElement;
+    if (this.revertButtonNode.contains(target)) {
+      this._setValue();
+    } else if (this.commitButtonNode.contains(target)) {
+      if (!this.commitButtonNode.hidden && !this.hasClass(ERROR_CLASS)) {
+        this._changeGuard = true;
+        this._mergeContent();
+        this._changeGuard = false;
         this._setValue();
-        break;
-      case this.commitButtonNode:
-        if (!this.commitButtonNode.hidden && !this.hasClass(ERROR_CLASS)) {
-          this._changeGuard = true;
-          this._mergeContent();
-          this._changeGuard = false;
-          this._setValue();
-        }
-        break;
-      case this.editorHostNode:
-        this.editor.focus();
-        break;
-      default:
-        break;
+      }
+    } else if (this.editorHostNode.contains(target)) {
+      this.editor.focus();
     }
   }
 
@@ -278,23 +268,23 @@ export class JSONEditor extends Widget {
    * Merge the user content.
    */
   private _mergeContent(): void {
-    let model = this.editor.model;
-    let old = this._originalValue;
-    let user = JSON.parse(model.value.text) as JSONObject;
-    let source = this.source;
+    const model = this.editor.model;
+    const old = this._originalValue;
+    const user = JSON.parse(model.value.text) as JSONObject;
+    const source = this.source;
     if (!source) {
       return;
     }
 
     // If it is in user and has changed from old, set in new.
-    for (let key in user) {
+    for (const key in user) {
       if (!JSONExt.deepEqual(user[key], old[key] || null)) {
         source.set(key, user[key]);
       }
     }
 
     // If it was in old and is not in user, remove from source.
-    for (let key in old) {
+    for (const key in old) {
       if (!(key in user)) {
         source.delete(key);
       }
@@ -310,14 +300,14 @@ export class JSONEditor extends Widget {
     this.revertButtonNode.hidden = true;
     this.commitButtonNode.hidden = true;
     this.removeClass(ERROR_CLASS);
-    let model = this.editor.model;
-    let content = this._source ? this._source.toJSON() : {};
+    const model = this.editor.model;
+    const content = this._source ? this._source.toJSON() : {};
     this._changeGuard = true;
     if (content === void 0) {
       model.value.text = 'No data!';
       this._originalValue = JSONExt.emptyObject;
     } else {
-      let value = JSON.stringify(content, null, 4);
+      const value = JSON.stringify(content, null, 4);
       model.value.text = value;
       this._originalValue = content;
       // Move the cursor to within the brace.
@@ -334,7 +324,7 @@ export class JSONEditor extends Widget {
   private _dataDirty = false;
   private _inputDirty = false;
   private _source: IObservableJSON | null = null;
-  private _originalValue = JSONExt.emptyObject;
+  private _originalValue: ReadonlyPartialJSONObject = JSONExt.emptyObject;
   private _changeGuard = false;
 }
 

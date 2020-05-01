@@ -1,9 +1,9 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { IDisposable } from '@phosphor/disposable';
+import { IDisposable } from '@lumino/disposable';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
 /**
  * A class that monitors activity on a signal.
@@ -65,7 +65,7 @@ export class ActivityMonitor<Sender, Args> implements IDisposable {
     clearTimeout(this._timer);
     this._sender = sender;
     this._args = args;
-    this._timer = window.setTimeout(() => {
+    this._timer = setTimeout(() => {
       this._activityStopped.emit({
         sender: this._sender,
         args: this._args
@@ -73,7 +73,7 @@ export class ActivityMonitor<Sender, Args> implements IDisposable {
     }, this._timeout);
   }
 
-  private _timer = -1;
+  private _timer: any = -1;
   private _timeout = -1;
   private _sender: Sender;
   private _args: Args;

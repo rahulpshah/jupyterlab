@@ -1,21 +1,21 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { ArrayExt, each, map, toArray } from '@phosphor/algorithm';
+import { ArrayExt, each, map, toArray } from '@lumino/algorithm';
 
-import { PromiseDelegate } from '@phosphor/coreutils';
+import { PromiseDelegate } from '@lumino/coreutils';
 
-import { Message, MessageLoop } from '@phosphor/messaging';
+import { Message, MessageLoop } from '@lumino/messaging';
 
-import { PanelLayout, Panel, Widget } from '@phosphor/widgets';
+import { PanelLayout, Panel, Widget } from '@lumino/widgets';
 
 import * as React from 'react';
 
-import { InstanceTracker } from './instancetracker';
+import { Styling } from './styling';
 
 import { ReactWidget } from './vdom';
 
-import { Styling } from './styling';
+import { WidgetTracker } from './widgettracker';
 
 /**
  * Create and show a dialog.
@@ -27,7 +27,7 @@ import { Styling } from './styling';
 export function showDialog<T>(
   options: Partial<Dialog.IOptions<T>> = {}
 ): Promise<Dialog.IResult<T>> {
-  let dialog = new Dialog(options);
+  const dialog = new Dialog(options);
   return dialog.launch();
 }
 
@@ -43,18 +43,36 @@ export function showErrorMessage(
   title: string,
   error: any,
   buttons: ReadonlyArray<Dialog.IButton> = [
-    Dialog.okButton({ label: 'DISMISS' })
+    Dialog.okButton({ label: 'Dismiss' })
   ]
 ): Promise<void> {
   console.warn('Showing error:', error);
 
-  return showDialog({
-    title: title,
-    body: error.message || title,
-    buttons: buttons
-  }).then(() => {
-    /* no-op */
-  });
+  // Cache promises to prevent multiple copies of identical dialogs showing
+  // to the user.
+  const body = typeof error === 'string' ? error : error.message;
+  const key = title + '----' + body;
+  const promise = Private.errorMessagePromiseCache.get(key);
+  if (promise) {
+    return promise;
+  } else {
+    const dialogPromise = showDialog({
+      title: title,
+      body: body,
+      buttons: buttons
+    }).then(
+      () => {
+        Private.errorMessagePromiseCache.delete(key);
+      },
+      error => {
+        // TODO: Use .finally() above when supported
+        Private.errorMessagePromiseCache.delete(key);
+        throw error;
+      }
+    );
+    Private.errorMessagePromiseCache.set(key, dialogPromise);
+    return dialogPromise;
+  }
 }
 
 /**
@@ -69,8 +87,8 @@ export class Dialog<T> extends Widget {
   constructor(options: Partial<Dialog.IOptions<T>> = {}) {
     super();
     this.addClass('jp-Dialog');
-    let normalized = Private.handleOptions(options);
-    let renderer = normalized.renderer;
+    const normalized = Private.handleOptions(options);
+    const renderer = normalized.renderer;
 
     this._host = normalized.host;
     this._defaultButton = normalized.defaultButton;
@@ -81,16 +99,16 @@ export class Dialog<T> extends Widget {
       })
     );
 
-    let layout = (this.layout = new PanelLayout());
-    let content = new Panel();
+    const layout = (this.layout = new PanelLayout());
+    const content = new Panel();
     content.addClass('jp-Dialog-content');
     layout.addWidget(content);
 
     this._body = normalized.body;
 
-    let header = renderer.createHeader(normalized.title);
-    let body = renderer.createBody(normalized.body);
-    let footer = renderer.createFooter(this._buttonNodes);
+    const header = renderer.createHeader(normalized.title);
+    const body = renderer.createBody(normalized.body);
+    const footer = renderer.createFooter(this._buttonNodes);
     content.addWidget(header);
     content.addWidget(body);
     content.addWidget(footer);
@@ -126,7 +144,7 @@ export class Dialog<T> extends Widget {
       return this._promise.promise;
     }
     const promise = (this._promise = new PromiseDelegate<Dialog.IResult<T>>());
-    let promises = Promise.all(Private.launchQueue);
+    const promises = Promise.all(Private.launchQueue);
     Private.launchQueue.push(this._promise.promise);
     return promises.then(() => {
       Widget.attach(this, this._host);
@@ -201,7 +219,7 @@ export class Dialog<T> extends Widget {
    *  A message handler invoked on an `'after-attach'` message.
    */
   protected onAfterAttach(msg: Message): void {
-    let node = this.node;
+    const node = this.node;
     node.addEventListener('keydown', this, true);
     node.addEventListener('contextmenu', this, true);
     node.addEventListener('click', this, true);
@@ -209,8 +227,8 @@ export class Dialog<T> extends Widget {
     this._first = Private.findFirstFocusable(this.node);
     this._original = document.activeElement as HTMLElement;
     if (this._focusNodeSelector) {
-      let body = this.node.querySelector('.jp-Dialog-body');
-      let el = body.querySelector(this._focusNodeSelector);
+      const body = this.node.querySelector('.jp-Dialog-body');
+      const el = body?.querySelector(this._focusNodeSelector);
 
       if (el) {
         this._primary = el as HTMLElement;
@@ -223,7 +241,7 @@ export class Dialog<T> extends Widget {
    *  A message handler invoked on an `'after-detach'` message.
    */
   protected onAfterDetach(msg: Message): void {
-    let node = this.node;
+    const node = this.node;
     node.removeEventListener('keydown', this, true);
     node.removeEventListener('contextmenu', this, true);
     node.removeEventListener('click', this, true);
@@ -247,17 +265,18 @@ export class Dialog<T> extends Widget {
    * @param event - The DOM event sent to the widget
    */
   protected _evtClick(event: MouseEvent): void {
-    let content = this.node.getElementsByClassName(
+    const content = this.node.getElementsByClassName(
       'jp-Dialog-content'
     )[0] as HTMLElement;
     if (!content.contains(event.target as HTMLElement)) {
       event.stopPropagation();
       event.preventDefault();
+      this.reject();
       return;
     }
-    for (let buttonNode of this._buttonNodes) {
+    for (const buttonNode of this._buttonNodes) {
       if (buttonNode.contains(event.target as HTMLElement)) {
-        let index = this._buttonNodes.indexOf(buttonNode);
+        const index = this._buttonNodes.indexOf(buttonNode);
         this.resolve(index);
       }
     }
@@ -278,7 +297,7 @@ export class Dialog<T> extends Widget {
         break;
       case 9: // Tab.
         // Handle a tab on the last button.
-        let node = this._buttonNodes[this._buttons.length - 1];
+        const node = this._buttonNodes[this._buttons.length - 1];
         if (document.activeElement === node && !event.shiftKey) {
           event.stopPropagation();
           event.preventDefault();
@@ -301,7 +320,7 @@ export class Dialog<T> extends Widget {
    * @param event - The DOM event sent to the widget
    */
   protected _evtFocus(event: FocusEvent): void {
-    let target = event.target as HTMLElement;
+    const target = event.target as HTMLElement;
     if (!this.node.contains(target as HTMLElement)) {
       event.stopPropagation();
       this._buttonNodes[this._defaultButton].focus();
@@ -320,7 +339,7 @@ export class Dialog<T> extends Widget {
     }
     this._promise = null;
     ArrayExt.removeFirstOf(Private.launchQueue, promise.promise);
-    let body = this._body;
+    const body = this._body;
     let value: T | null = null;
     if (
       button.accept &&
@@ -342,7 +361,7 @@ export class Dialog<T> extends Widget {
   private _defaultButton: number;
   private _host: HTMLElement;
   private _body: Dialog.Body<T>;
-  private _focusNodeSelector = '';
+  private _focusNodeSelector: string | undefined = '';
 }
 
 /**
@@ -358,11 +377,6 @@ export namespace Dialog {
    * The header input types.
    */
   export type Header = React.ReactElement<any> | string;
-
-  /**
-   * A simple type for prompt widget
-   */
-  type PromptValue = string | number | boolean;
 
   /**
    * A widget used as a dialog body.
@@ -443,7 +457,7 @@ export namespace Dialog {
     host: HTMLElement;
 
     /**
-     * The to buttons to display. Defaults to cancel and accept buttons.
+     * The buttons to display. Defaults to cancel and accept buttons.
      */
     buttons: ReadonlyArray<IButton>;
 
@@ -527,7 +541,7 @@ export namespace Dialog {
    */
   export function createButton(value: Partial<IButton>): Readonly<IButton> {
     value.accept = value.accept !== false;
-    let defaultLabel = value.accept ? 'OK' : 'CANCEL';
+    const defaultLabel = value.accept ? 'OK' : 'Cancel';
     return {
       label: value.label || defaultLabel,
       iconClass: value.iconClass || '',
@@ -568,24 +582,6 @@ export namespace Dialog {
   }
 
   /**
-   * Simple dialog to prompt for a value
-   * @param prompt Text to show on the prompt
-   * @param defaultValue Initial value
-   * @returns a Promise which will resolve with the value entered by user.
-   */
-  export function prompt<T extends PromptValue>(
-    prompt: string,
-    defaultValue: PromptValue
-  ): Promise<Dialog.IResult<T>> {
-    return showDialog({
-      title: prompt,
-      body: new PromptWidget<T>(defaultValue as T),
-      buttons: [Dialog.cancelButton(), Dialog.okButton()],
-      focusNodeSelector: 'input'
-    });
-  }
-
-  /**
    * Disposes all dialog instances.
    *
    * #### Notes
@@ -596,56 +592,6 @@ export namespace Dialog {
     tracker.forEach(dialog => {
       dialog.dispose();
     });
-  }
-
-  /**
-   * Create and show a prompt dialog
-   */
-  class PromptWidget<T extends PromptValue> extends Widget {
-    constructor(value: T) {
-      let body = document.createElement('div');
-      let input = document.createElement('input');
-      if (typeof value === 'string') {
-        input.type = 'text';
-        if (value) {
-          input.value = value;
-        }
-      }
-      if (typeof value === 'number') {
-        input.type = 'number';
-        if (value) {
-          input.value = value.toFixed(2);
-        }
-      }
-      if (typeof value === 'boolean') {
-        input.type = 'checkbox';
-        input.checked = value;
-      }
-      body.appendChild(input);
-      super({ node: body });
-    }
-
-    /**
-     * Get the input text node.
-     */
-    get inputNode(): HTMLInputElement {
-      return this.node.getElementsByTagName('input')[0] as HTMLInputElement;
-    }
-
-    /**
-     * Get the value of the widget.
-     */
-    getValue(): T {
-      if (this.inputNode.type === 'number') {
-        // In this branch T extends number.
-        return parseFloat(this.inputNode.value) as T;
-      }
-      if (this.inputNode.type === 'checkbox') {
-        // In this branch T extends boolean.
-        return this.inputNode.checked as T;
-      }
-      return this.inputNode.value as T;
-    }
   }
 
   /**
@@ -705,7 +651,7 @@ export namespace Dialog {
      * @returns A widget for the footer.
      */
     createFooter(buttons: ReadonlyArray<HTMLElement>): Widget {
-      let footer = new Widget();
+      const footer = new Widget();
       footer.addClass('jp-Dialog-footer');
       each(buttons, button => {
         footer.node.appendChild(button);
@@ -751,7 +697,7 @@ export namespace Dialog {
       }
 
       // Add the extra class.
-      let extra = data.className;
+      const extra = data.className;
       if (extra) {
         name += ` ${extra}`;
       }
@@ -782,8 +728,8 @@ export namespace Dialog {
      * @returns The full class name for the item icon.
      */
     createIconClass(data: IButton): string {
-      let name = 'jp-Dialog-buttonIcon';
-      let extra = data.iconClass;
+      const name = 'jp-Dialog-buttonIcon';
+      const extra = data.iconClass;
       return extra ? `${name} ${extra}` : name;
     }
 
@@ -809,9 +755,9 @@ export namespace Dialog {
   export const defaultRenderer = new Renderer();
 
   /**
-   * The dialog instance tracker.
+   * The dialog widget tracker.
    */
-  export const tracker = new InstanceTracker<Dialog<any>>({
+  export const tracker = new WidgetTracker<Dialog<any>>({
     namespace: '@jupyterlab/apputils:Dialog'
   });
 }
@@ -823,7 +769,9 @@ namespace Private {
   /**
    * The queue for launching dialogs.
    */
-  export let launchQueue: Promise<Dialog.IResult<any>>[] = [];
+  export const launchQueue: Promise<Dialog.IResult<any>>[] = [];
+
+  export const errorMessagePromiseCache: Map<string, Promise<void>> = new Map();
 
   /**
    * Handle the input options for a dialog.
@@ -835,7 +783,10 @@ namespace Private {
   export function handleOptions<T>(
     options: Partial<Dialog.IOptions<T>> = {}
   ): Dialog.IOptions<T> {
-    let buttons = options.buttons || [Dialog.cancelButton(), Dialog.okButton()];
+    const buttons = options.buttons || [
+      Dialog.cancelButton(),
+      Dialog.okButton()
+    ];
     let defaultButton = buttons.length - 1;
     if (options.defaultButton !== undefined) {
       defaultButton = options.defaultButton;
@@ -855,7 +806,7 @@ namespace Private {
    *  Find the first focusable item in the dialog.
    */
   export function findFirstFocusable(node: HTMLElement): HTMLElement {
-    let candidateSelectors = [
+    const candidateSelectors = [
       'input',
       'select',
       'a[href]',

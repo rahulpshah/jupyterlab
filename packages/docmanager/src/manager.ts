@@ -1,11 +1,11 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { IClientSession } from '@jupyterlab/apputils';
+import { ISessionContext, sessionContextDialogs } from '@jupyterlab/apputils';
 
 import { PathExt } from '@jupyterlab/coreutils';
 
-import { UUID } from '@phosphor/coreutils';
+import { UUID } from '@lumino/coreutils';
 
 import {
   DocumentRegistry,
@@ -15,35 +15,21 @@ import {
 
 import { Contents, Kernel, ServiceManager } from '@jupyterlab/services';
 
-import { ArrayExt, find } from '@phosphor/algorithm';
+import { ArrayExt, find } from '@lumino/algorithm';
 
-import { Token } from '@phosphor/coreutils';
+import { IDisposable } from '@lumino/disposable';
 
-import { IDisposable } from '@phosphor/disposable';
+import { AttachedProperty } from '@lumino/properties';
 
-import { AttachedProperty } from '@phosphor/properties';
+import { ISignal, Signal } from '@lumino/signaling';
 
-import { ISignal, Signal } from '@phosphor/signaling';
-
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import { SaveHandler } from './savehandler';
 
+import { IDocumentManager } from './tokens';
+
 import { DocumentWidgetManager } from './widgetmanager';
-
-/* tslint:disable */
-/**
- * The document registry token.
- */
-export const IDocumentManager = new Token<IDocumentManager>(
-  '@jupyterlab/docmanager:IDocumentManager'
-);
-/* tslint:enable */
-
-/**
- * The interface for a document manager.
- */
-export interface IDocumentManager extends DocumentManager {}
 
 /**
  * The document manager.
@@ -55,18 +41,21 @@ export interface IDocumentManager extends DocumentManager {}
  * open, and a list of widgets for each context. The document manager is in
  * control of the proper closing and disposal of the widgets and contexts.
  */
-export class DocumentManager implements IDisposable {
+export class DocumentManager implements IDocumentManager {
   /**
    * Construct a new document manager.
    */
   constructor(options: DocumentManager.IOptions) {
     this.registry = options.registry;
     this.services = options.manager;
+    this._dialogs = options.sessionDialogs || sessionContextDialogs;
 
     this._opener = options.opener;
     this._when = options.when || options.manager.ready;
 
-    let widgetManager = new DocumentWidgetManager({ registry: this.registry });
+    const widgetManager = new DocumentWidgetManager({
+      registry: this.registry
+    });
     widgetManager.activateRequested.connect(this._onActivateRequested, this);
     this._widgetManager = widgetManager;
     this._setBusy = options.setBusy;
@@ -102,6 +91,9 @@ export class DocumentManager implements IDisposable {
     // For each existing context, start/stop the autosave handler as needed.
     this._contexts.forEach(context => {
       const handler = Private.saveHandlerProperty.get(context);
+      if (!handler) {
+        return;
+      }
       if (value === true && !handler.isActive) {
         handler.start();
       } else if (value === false && handler.isActive) {
@@ -123,6 +115,9 @@ export class DocumentManager implements IDisposable {
     // For each existing context, set the save interval as needed.
     this._contexts.forEach(context => {
       const handler = Private.saveHandlerProperty.get(context);
+      if (!handler) {
+        return;
+      }
       handler.saveInterval = value || 120;
     });
   }
@@ -240,7 +235,7 @@ export class DocumentManager implements IDisposable {
     path: string,
     widgetName = 'default',
     kernel?: Partial<Kernel.IModel>
-  ): Widget {
+  ): Widget | undefined {
     return this._createOrOpenDocument('create', path, widgetName, kernel);
   }
 
@@ -286,10 +281,10 @@ export class DocumentManager implements IDisposable {
     path: string,
     widgetName: string | null = 'default'
   ): IDocumentWidget | undefined {
-    let newPath = PathExt.normalize(path);
+    const newPath = PathExt.normalize(path);
     let widgetNames = [widgetName];
     if (widgetName === 'default') {
-      let factory = this.registry.defaultWidgetFactory(newPath);
+      const factory = this.registry.defaultWidgetFactory(newPath);
       if (!factory) {
         return undefined;
       }
@@ -300,11 +295,13 @@ export class DocumentManager implements IDisposable {
         .map(f => f.name);
     }
 
-    for (let context of this._contextsForPath(newPath)) {
+    for (const context of this._contextsForPath(newPath)) {
       for (const widgetName of widgetNames) {
-        let widget = this._widgetManager.findWidget(context, widgetName);
-        if (widget) {
-          return widget;
+        if (widgetName !== null) {
+          const widget = this._widgetManager.findWidget(context, widgetName);
+          if (widget) {
+            return widget;
+          }
         }
       }
     }
@@ -375,7 +372,7 @@ export class DocumentManager implements IDisposable {
     kernel?: Partial<Kernel.IModel>,
     options?: DocumentRegistry.IOpenOptions
   ): IDocumentWidget | undefined {
-    let widget = this.findWidget(path, widgetName);
+    const widget = this.findWidget(path, widgetName);
     if (widget) {
       this._opener.open(widget, options || {});
       return widget;
@@ -426,8 +423,11 @@ export class DocumentManager implements IDisposable {
     path: string,
     factoryName: string
   ): Private.IContext | undefined {
+    const normalizedPath = this.services.contents.normalize(path);
     return find(this._contexts, context => {
-      return context.path === path && context.factoryName === factoryName;
+      return (
+        context.path === normalizedPath && context.factoryName === factoryName
+      );
     });
   }
 
@@ -440,7 +440,8 @@ export class DocumentManager implements IDisposable {
    * notebook model factory and a text model factory).
    */
   private _contextsForPath(path: string): Private.IContext[] {
-    return this._contexts.filter(context => context.path === path);
+    const normalizedPath = this.services.contents.normalize(path);
+    return this._contexts.filter(context => context.path === normalizedPath);
   }
 
   /**
@@ -449,7 +450,7 @@ export class DocumentManager implements IDisposable {
   private _createContext(
     path: string,
     factory: DocumentRegistry.ModelFactory,
-    kernelPreference: IClientSession.IKernelPreference
+    kernelPreference?: ISessionContext.IKernelPreference
   ): Private.IContext {
     // TODO: Make it impossible to open two different contexts for the same
     // path. Or at least prompt the closing of all widgets associated with the
@@ -459,25 +460,26 @@ export class DocumentManager implements IDisposable {
     // widgets that have different models.
 
     // Allow options to be passed when adding a sibling.
-    let adopter = (
+    const adopter = (
       widget: IDocumentWidget,
       options?: DocumentRegistry.IOpenOptions
     ) => {
       this._widgetManager.adoptWidget(context, widget);
       this._opener.open(widget, options);
     };
-    let modelDBFactory =
+    const modelDBFactory =
       this.services.contents.getModelDBFactory(path) || undefined;
-    let context = new Context({
+    const context = new Context({
       opener: adopter,
       manager: this.services,
       factory,
       path,
       kernelPreference,
       modelDBFactory,
-      setBusy: this._setBusy
+      setBusy: this._setBusy,
+      sessionDialogs: this._dialogs
     });
-    let handler = new SaveHandler({
+    const handler = new SaveHandler({
       context,
       saveInterval: this.autosaveInterval
     });
@@ -506,9 +508,9 @@ export class DocumentManager implements IDisposable {
     path: string,
     widgetName: string
   ): DocumentRegistry.WidgetFactory | undefined {
-    let { registry } = this;
+    const { registry } = this;
     if (widgetName === 'default') {
-      let factory = registry.defaultWidgetFactory(path);
+      const factory = registry.defaultWidgetFactory(path);
       if (!factory) {
         return undefined;
       }
@@ -532,24 +534,24 @@ export class DocumentManager implements IDisposable {
     kernel?: Partial<Kernel.IModel>,
     options?: DocumentRegistry.IOpenOptions
   ): IDocumentWidget | undefined {
-    let widgetFactory = this._widgetFactoryFor(path, widgetName);
+    const widgetFactory = this._widgetFactoryFor(path, widgetName);
     if (!widgetFactory) {
       return undefined;
     }
-    let modelName = widgetFactory.modelName || 'text';
-    let factory = this.registry.getModelFactory(modelName);
+    const modelName = widgetFactory.modelName || 'text';
+    const factory = this.registry.getModelFactory(modelName);
     if (!factory) {
       return undefined;
     }
 
     // Handle the kernel pereference.
-    let preference = this.registry.getKernelPreference(
+    const preference = this.registry.getKernelPreference(
       path,
       widgetFactory.name,
       kernel
     );
 
-    let context: Private.IContext | null = null;
+    let context: Private.IContext | null;
     let ready: Promise<void> = Promise.resolve(undefined);
 
     // Handle the load-from-disk case
@@ -560,15 +562,17 @@ export class DocumentManager implements IDisposable {
         context = this._createContext(path, factory, preference);
         // Populate the model, either from disk or a
         // model backend.
-        ready = this._when.then(() => context.initialize(false));
+        ready = this._when.then(() => context!.initialize(false));
       }
     } else if (which === 'create') {
       context = this._createContext(path, factory, preference);
       // Immediately save the contents to disk.
-      ready = this._when.then(() => context.initialize(true));
+      ready = this._when.then(() => context!.initialize(true));
+    } else {
+      throw new Error(`Invalid argument 'which': ${which}`);
     }
 
-    let widget = this._widgetManager.createWidget(widgetFactory, context!);
+    const widget = this._widgetManager.createWidget(widgetFactory, context);
     this._opener.open(widget, options || {});
 
     // If the initial opening of the context fails, dispose of the widget.
@@ -597,7 +601,8 @@ export class DocumentManager implements IDisposable {
   private _autosave = true;
   private _autosaveInterval = 120;
   private _when: Promise<void>;
-  private _setBusy: () => IDisposable;
+  private _setBusy: (() => IDisposable) | undefined;
+  private _dialogs: ISessionContext.IDialogs;
 }
 
 /**
@@ -632,6 +637,11 @@ export namespace DocumentManager {
      * A function called when a kernel is busy.
      */
     setBusy?: () => IDisposable;
+
+    /**
+     * The provider for session dialogs.
+     */
+    sessionDialogs?: ISessionContext.IDialogs;
   }
 
   /**

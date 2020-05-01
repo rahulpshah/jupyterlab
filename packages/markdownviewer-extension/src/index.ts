@@ -7,14 +7,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 
-import { InstanceTracker } from '@jupyterlab/apputils';
-
-import { ISettingRegistry } from '@jupyterlab/coreutils';
-
-import {
-  IRenderMimeRegistry,
-  markdownRendererFactory
-} from '@jupyterlab/rendermime';
+import { WidgetTracker } from '@jupyterlab/apputils';
 
 import {
   MarkdownViewer,
@@ -23,11 +16,21 @@ import {
   IMarkdownViewerTracker
 } from '@jupyterlab/markdownviewer';
 
+import {
+  IRenderMimeRegistry,
+  markdownRendererFactory
+} from '@jupyterlab/rendermime';
+
+import { ISettingRegistry } from '@jupyterlab/settingregistry';
+
+import { PathExt } from '@jupyterlab/coreutils';
+
 /**
  * The command IDs used by the markdownviewer plugin.
  */
 namespace CommandIDs {
   export const markdownPreview = 'markdownviewer:open';
+  export const markdownEditor = 'markdownviewer:edit';
 }
 
 /**
@@ -61,7 +64,7 @@ function activate(
   rendermime.addFactory(markdownRendererFactory);
 
   const namespace = 'markdownviewer-widget';
-  const tracker = new InstanceTracker<MarkdownDocument>({
+  const tracker = new WidgetTracker<MarkdownDocument>({
     namespace
   });
 
@@ -74,7 +77,7 @@ function activate(
    */
   function updateWidget(widget: MarkdownViewer): void {
     Object.keys(config).forEach((k: keyof MarkdownViewer.IConfig) => {
-      widget.setOption(k, config[k]);
+      widget.setOption(k, config[k] ?? null);
     });
   }
 
@@ -110,7 +113,7 @@ function activate(
     defaultRendered: ['markdown']
   });
   factory.widgetCreated.connect((sender, widget) => {
-    // Notify the instance tracker if restore data needs to update.
+    // Notify the widget tracker if restore data needs to update.
     widget.context.pathChanged.connect(() => {
       void tracker.save(widget);
     });
@@ -121,7 +124,7 @@ function activate(
   docRegistry.addWidgetFactory(factory);
 
   // Handle state restoration.
-  restorer.restore(tracker, {
+  void restorer.restore(tracker, {
     command: 'docmanager:open',
     args: widget => ({ path: widget.context.path, factory: FACTORY }),
     name: widget => widget.context.path
@@ -130,7 +133,7 @@ function activate(
   commands.addCommand(CommandIDs.markdownPreview, {
     label: 'Markdown Preview',
     execute: args => {
-      let path = args['path'];
+      const path = args['path'];
       if (typeof path !== 'string') {
         return;
       }
@@ -140,6 +143,35 @@ function activate(
         options: args['options']
       });
     }
+  });
+
+  commands.addCommand(CommandIDs.markdownEditor, {
+    execute: () => {
+      const widget = tracker.currentWidget;
+      if (!widget) {
+        return;
+      }
+      const path = widget.context.path;
+      return commands.execute('docmanager:open', {
+        path,
+        factory: 'Editor',
+        options: {
+          mode: 'split-right'
+        }
+      });
+    },
+    isVisible: () => {
+      const widget = tracker.currentWidget;
+      return (
+        (widget && PathExt.extname(widget.context.path) === '.md') || false
+      );
+    },
+    label: 'Show Markdown Editor'
+  });
+
+  app.contextMenu.addItem({
+    command: CommandIDs.markdownEditor,
+    selector: '.jp-RenderedMarkdown'
   });
 
   return tracker;

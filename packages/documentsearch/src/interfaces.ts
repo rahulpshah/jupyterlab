@@ -1,14 +1,18 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { ISignal } from '@phosphor/signaling';
-import { Widget } from '@phosphor/widgets';
+import { ISignal } from '@lumino/signaling';
+import { Widget } from '@lumino/widgets';
+
+export interface IFiltersType {
+  output: boolean;
+}
 
 export interface IDisplayState {
   /**
    * The index of the currently selected match
    */
-  currentIndex: number;
+  currentIndex: number | null;
 
   /**
    * The total number of matches found in the document
@@ -33,7 +37,7 @@ export interface IDisplayState {
   /**
    * The query constructed from the text and the case/regex flags
    */
-  query: RegExp;
+  query: RegExp | null;
 
   /**
    * An error message (used for bad regex syntax)
@@ -64,6 +68,16 @@ export interface IDisplayState {
    * Whether or not the replace entry row is visible
    */
   replaceEntryShown: boolean;
+
+  /**
+   * What should we include when we search?
+   */
+  filters: IFiltersType;
+
+  /**
+   * Is the filters view open?
+   */
+  filtersOpen: boolean;
 }
 
 export interface ISearchMatch {
@@ -94,18 +108,20 @@ export interface ISearchMatch {
 }
 
 /**
- * This interface is meant to enforce that SearchProviders implement the static
- * canSearchOn function.
+ * This interface is meant to enforce that SearchProviders implement
+ * the static canSearchOn function.
  */
-export interface ISearchProviderConstructor {
-  new (): ISearchProvider;
+export interface ISearchProviderConstructor<T extends Widget = Widget> {
+  new (): ISearchProvider<T>;
   /**
-   * Report whether or not this provider has the ability to search on the given object
+   * Report whether or not this provider has the ability to search on the
+   * given object. The function is a type guard, meaning that it returns
+   * a boolean, but has a type predicate (`x is T`) for its return signature.
    */
-  canSearchOn(domain: Widget): boolean;
+  canSearchOn(domain: Widget): domain is T;
 }
 
-export interface ISearchProvider {
+export interface ISearchProvider<T extends Widget = Widget> {
   /**
    * Get an initial query value if applicable so that it can be entered
    * into the search box as an initial query
@@ -114,17 +130,22 @@ export interface ISearchProvider {
    *
    * @returns Initial value used to populate the search box.
    */
-  getInitialQuery(searchTarget: Widget): any;
+  getInitialQuery(searchTarget: T): any;
   /**
    * Initialize the search using the provided options.  Should update the UI
    * to highlight all matches and "select" whatever the first match should be.
    *
    * @param query A RegExp to be use to perform the search
    * @param searchTarget The widget to be searched
+   * @param filters Filter parameters to pass to provider
    *
    * @returns A promise that resolves with a list of all matches
    */
-  startQuery(query: RegExp, searchTarget: Widget): Promise<ISearchMatch[]>;
+  startQuery(
+    query: RegExp,
+    searchTarget: T,
+    filters: IFiltersType
+  ): Promise<ISearchMatch[]>;
 
   /**
    * Clears state of a search provider to prepare for startQuery to be called
@@ -179,7 +200,7 @@ export interface ISearchProvider {
   /**
    * Signal indicating that something in the search has changed, so the UI should update
    */
-  readonly changed: ISignal<ISearchProvider, void>;
+  readonly changed: ISignal<ISearchProvider<T>, void>;
 
   /**
    * The current index of the selected match.
@@ -192,4 +213,10 @@ export interface ISearchProvider {
    * the replace option.
    */
   readonly isReadOnly: boolean;
+
+  /**
+   * Set to true if the widget under search has outputs to search.
+   * Defaults to false.
+   */
+  readonly hasOutputs?: boolean;
 }

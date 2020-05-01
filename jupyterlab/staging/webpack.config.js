@@ -1,66 +1,84 @@
-/*-----------------------------------------------------------------------------
+// This file is auto-generated from the corresponding file in /dev_mode
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
-var path = require('path');
-var fs = require('fs-extra');
-var Handlebars = require('handlebars');
-var HtmlWebpackPlugin = require('html-webpack-plugin');
-var webpack = require('webpack');
-var DuplicatePackageCheckerPlugin = require('duplicate-package-checker-webpack-plugin');
-var Visualizer = require('webpack-visualizer-plugin');
+const plib = require('path');
+const fs = require('fs-extra');
+const Handlebars = require('handlebars');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const webpack = require('webpack');
+const BundleAnalyzerPlugin = require('webpack-bundle-analyzer')
+  .BundleAnalyzerPlugin;
 
-var Build = require('@jupyterlab/buildutils').Build;
-var package_data = require('./package.json');
+const Build = require('@jupyterlab/buildutils').Build;
+const WPPlugin = require('@jupyterlab/buildutils').WPPlugin;
+const package_data = require('./package.json');
 
 // Handle the extensions.
-var jlab = package_data.jupyterlab;
-var extensions = jlab.extensions;
-var mimeExtensions = jlab.mimeExtensions;
-
-var extraConfig = Build.ensureAssets({
-  packageNames: Object.keys(mimeExtensions).concat(Object.keys(extensions)),
-  output: jlab.outputDir
-});
-
-// Create the entry point file.
-var source = fs.readFileSync('index.js').toString();
-var template = Handlebars.compile(source);
-var data = {
-  jupyterlab_extensions: extensions,
-  jupyterlab_mime_extensions: mimeExtensions
-};
-var result = template(data);
+const jlab = package_data.jupyterlab;
+const extensions = jlab.extensions;
+const mimeExtensions = jlab.mimeExtensions;
+const packageNames = Object.keys(mimeExtensions).concat(
+  Object.keys(extensions)
+);
 
 // Ensure a clear build directory.
-var buildDir = path.resolve(jlab.buildDir);
+const buildDir = plib.resolve(jlab.buildDir);
 if (fs.existsSync(buildDir)) {
   fs.removeSync(buildDir);
 }
 fs.ensureDirSync(buildDir);
 
-fs.writeFileSync(path.join(buildDir, 'index.out.js'), result);
-fs.copySync('./package.json', path.join(buildDir, 'package.json'));
-
-// Set up variables for watch mode.
-var localLinked = {};
-var ignoreCache = Object.create(null);
-Object.keys(jlab.linkedPackages).forEach(function(name) {
-  var localPath = require.resolve(path.join(name, 'package.json'));
-  localLinked[name] = path.dirname(localPath);
+// Build the assets
+const extraConfig = Build.ensureAssets({
+  packageNames: packageNames,
+  output: jlab.outputDir
 });
-var ignorePatterns = [/^\.\#/]; // eslint-disable-line
+
+// Create the entry point file.
+const source = fs.readFileSync('index.js').toString();
+const template = Handlebars.compile(source);
+const data = {
+  jupyterlab_extensions: extensions,
+  jupyterlab_mime_extensions: mimeExtensions
+};
+const result = template(data);
+
+fs.writeFileSync(plib.join(buildDir, 'index.out.js'), result);
+fs.copySync('./package.json', plib.join(buildDir, 'package.json'));
+fs.copySync(
+  plib.join(jlab.outputDir, 'imports.css'),
+  plib.join(buildDir, 'imports.css')
+);
+
+// Set up variables for the watch mode ignore plugins
+const watched = {};
+const ignoreCache = Object.create(null);
+Object.keys(jlab.linkedPackages).forEach(function(name) {
+  if (name in watched) {
+    return;
+  }
+  const localPkgPath = require.resolve(plib.join(name, 'package.json'));
+  watched[name] = plib.dirname(localPkgPath);
+});
+
+// Set up source-map-loader to look in watched lib dirs
+const sourceMapRes = Object.values(watched).reduce((res, name) => {
+  res.push(new RegExp(name + '/lib'));
+  return res;
+}, []);
 
 /**
  * Sync a local path to a linked package path if they are files and differ.
  */
 function maybeSync(localPath, name, rest) {
-  var stats = fs.statSync(localPath);
+  const stats = fs.statSync(localPath);
   if (!stats.isFile(localPath)) {
     return;
   }
-  var source = fs.realpathSync(path.join(jlab.linkedPackages[name], rest));
+  const source = fs.realpathSync(plib.join(jlab.linkedPackages[name], rest));
   if (source === fs.realpathSync(localPath)) {
     return;
   }
@@ -77,42 +95,38 @@ function maybeSync(localPath, name, rest) {
 }
 
 /**
- * A WebPack Plugin that copies the assets to the static directory and
- * fixes the output of the HTMLWebpackPlugin
+ * A filter function set up to exclude all files that are not
+ * in a package contained by the Jupyterlab repo. Used to ignore
+ * files during a `--watch` build.
  */
-function JupyterFrontEndPlugin() {}
+function ignored(path) {
+  path = plib.resolve(path);
+  if (path in ignoreCache) {
+    // Bail if already found.
+    return ignoreCache[path];
+  }
 
-JupyterFrontEndPlugin.prototype.apply = function(compiler) {
-  compiler.hooks.afterEmit.tap(
-    'JupyterFrontEndPlugin',
-    function() {
-      // Fix the template output.
-      var indexPath = path.join(buildDir, 'index.html');
-      var indexData = fs.readFileSync(indexPath, 'utf8');
-      indexData = indexData
-        .split('{{page_config.bundleUrl}}/')
-        .join('{{page_config.bundleUrl}}');
-      fs.writeFileSync(indexPath, indexData, 'utf8');
-
-      // Copy the static assets.
-      var staticDir = jlab.staticDir;
-      if (!staticDir) {
-        return;
-      }
-      // Ensure a clean static directory on the first emit.
-      if (this._first && fs.existsSync(staticDir)) {
-        fs.removeSync(staticDir);
-      }
-      this._first = false;
-      fs.copySync(buildDir, staticDir);
-    }.bind(this)
-  );
-};
-
-JupyterFrontEndPlugin.prototype._first = true;
+  // Limit the watched files to those in our local linked package dirs.
+  let ignore = true;
+  Object.keys(watched).some(name => {
+    const rootPath = watched[name];
+    const contained = path.indexOf(rootPath + plib.sep) !== -1;
+    if (path !== rootPath && !contained) {
+      return false;
+    }
+    const rest = path.slice(rootPath.length);
+    if (rest.indexOf('node_modules') === -1) {
+      ignore = false;
+      maybeSync(path, name, rest);
+    }
+    return true;
+  });
+  ignoreCache[path] = ignore;
+  return ignore;
+}
 
 const plugins = [
-  new DuplicatePackageCheckerPlugin({
+  new WPPlugin.NowatchDuplicatePackageCheckerPlugin({
     verbose: true,
     exclude(instance) {
       // ignore known duplicates
@@ -122,26 +136,91 @@ const plugins = [
     }
   }),
   new HtmlWebpackPlugin({
-    template: path.join('templates', 'template.html'),
+    chunksSortMode: 'none',
+    template: plib.join('templates', 'template.html'),
     title: jlab.name || 'JupyterLab'
   }),
   new webpack.HashedModuleIdsPlugin(),
-  new JupyterFrontEndPlugin({})
+  // custom plugin for ignoring files during a `--watch` build
+  new WPPlugin.FilterWatchIgnorePlugin(ignored),
+  // custom plugin that copies the assets to the static directory
+  new WPPlugin.FrontEndPlugin(buildDir, jlab.staticDir)
 ];
 
 if (process.argv.includes('--analyze')) {
-  plugins.push(new Visualizer());
+  plugins.push(new BundleAnalyzerPlugin());
 }
 
 module.exports = [
   {
     mode: 'development',
     entry: {
-      main: ['whatwg-fetch', path.resolve(buildDir, 'index.out.js')]
+      main: ['whatwg-fetch', plib.resolve(buildDir, 'index.out.js')]
+    },
+    // Map Phosphor files to Lumino files.
+    resolve: {
+      alias: {
+        '@phosphor/algorithm$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/algorithm/lib/index.js'
+        ),
+        '@phosphor/application$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/application/lib/index.js'
+        ),
+        '@phosphor/commands$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/commands/lib/index.js'
+        ),
+        '@phosphor/coreutils$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/coreutils/lib/index.js'
+        ),
+        '@phosphor/disposable$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/disposable/lib/index.js'
+        ),
+        '@phosphor/domutils$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/domutils/lib/index.js'
+        ),
+        '@phosphor/dragdrop$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/dragdrop/lib/index.js'
+        ),
+        '@phosphor/dragdrop/style': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/widgets/style'
+        ),
+        '@phosphor/messaging$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/messaging/lib/index.js'
+        ),
+        '@phosphor/properties$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/properties/lib'
+        ),
+        '@phosphor/signaling': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/signaling/lib/index.js'
+        ),
+        '@phosphor/widgets/style': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/widgets/style'
+        ),
+        '@phosphor/virtualdom$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/virtualdom/lib/index.js'
+        ),
+        '@phosphor/widgets$': plib.resolve(
+          __dirname,
+          'node_modules/@lumino/widgets/lib/index.js'
+        )
+      }
     },
     output: {
-      path: path.resolve(buildDir),
-      publicPath: '{{page_config.bundleUrl}}',
+      path: plib.resolve(buildDir),
+      publicPath: '{{page_config.fullStaticUrl}}/',
       filename: '[name].[chunkhash].js'
     },
     optimization: {
@@ -156,10 +235,9 @@ module.exports = [
         { test: /\.txt$/, use: 'raw-loader' },
         {
           test: /\.js$/,
+          include: sourceMapRes,
           use: ['source-map-loader'],
-          enforce: 'pre',
-          // eslint-disable-next-line no-undef
-          exclude: /node_modules/
+          enforce: 'pre'
         },
         { test: /\.(jpg|png|gif)$/, use: 'file-loader' },
         { test: /\.js.map$/, use: 'file-loader' },
@@ -181,57 +259,34 @@ module.exports = [
         },
         { test: /\.eot(\?v=\d+\.\d+\.\d+)?$/, use: 'file-loader' },
         {
+          // In .css files, svg is loaded as a data URI.
           test: /\.svg(\?v=\d+\.\d+\.\d+)?$/,
-          use: 'url-loader?limit=10000&mimetype=image/svg+xml'
+          issuer: { test: /\.css$/ },
+          use: {
+            loader: 'svg-url-loader',
+            options: { encoding: 'none', limit: 10000 }
+          }
+        },
+        {
+          // In .ts and .tsx files (both of which compile to .js), svg files
+          // must be loaded as a raw string instead of data URIs.
+          test: /\.svg(\?v=\d+\.\d+\.\d+)?$/,
+          issuer: { test: /\.js$/ },
+          use: {
+            loader: 'raw-loader'
+          }
         }
       ]
     },
     watchOptions: {
-      ignored: function(localPath) {
-        localPath = path.resolve(localPath);
-        if (localPath in ignoreCache) {
-          return ignoreCache[localPath];
-        }
-
-        // Ignore files with certain patterns
-        var baseName = localPath.replace(/^.*[\\\/]/, ''); // eslint-disable-line
-        if (
-          ignorePatterns.some(function(rexp) {
-            return baseName.match(rexp);
-          })
-        ) {
-          return true;
-        }
-
-        // Limit the watched files to those in our local linked package dirs.
-        var ignore = true;
-        Object.keys(localLinked).some(function(name) {
-          // Bail if already found.
-          var rootPath = localLinked[name];
-          var contained = localPath.indexOf(rootPath + path.sep) !== -1;
-          if (localPath !== rootPath && !contained) {
-            return false;
-          }
-          var rest = localPath.slice(rootPath.length);
-          if (rest.indexOf('node_modules') === -1) {
-            ignore = false;
-            maybeSync(localPath, name, rest);
-          }
-          return true;
-        });
-        ignoreCache[localPath] = ignore;
-        return ignore;
-      }
+      poll: 333
     },
     node: {
       fs: 'empty'
     },
     bail: true,
-    devtool: 'source-map',
+    devtool: 'inline-source-map',
     externals: ['node-fetch', 'ws'],
-    plugins,
-    stats: {
-      chunkModules: true
-    }
+    plugins
   }
 ].concat(extraConfig);

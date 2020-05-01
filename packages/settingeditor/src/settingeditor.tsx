@@ -1,23 +1,27 @@
-/*-----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
 import { CodeEditor } from '@jupyterlab/codeeditor';
 
-import { ISettingRegistry, IStateDB } from '@jupyterlab/coreutils';
+import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 
-import { RenderMimeRegistry } from '@jupyterlab/rendermime';
+import { ISettingRegistry } from '@jupyterlab/settingregistry';
 
-import { CommandRegistry } from '@phosphor/commands';
+import { IStateDB } from '@jupyterlab/statedb';
 
-import { JSONExt, JSONObject, JSONValue } from '@phosphor/coreutils';
+import { jupyterIcon } from '@jupyterlab/ui-components';
 
-import { Message } from '@phosphor/messaging';
+import { CommandRegistry } from '@lumino/commands';
 
-import { ISignal } from '@phosphor/signaling';
+import { JSONExt, JSONObject, JSONValue } from '@lumino/coreutils';
 
-import { PanelLayout, Widget } from '@phosphor/widgets';
+import { Message } from '@lumino/messaging';
+
+import { ISignal } from '@lumino/signaling';
+
+import { PanelLayout, Widget } from '@lumino/widgets';
 
 import * as React from 'react';
 
@@ -131,16 +135,9 @@ export class SettingEditor extends Widget {
   }
 
   /**
-   * Whether the debug panel is visible.
-   */
-  get isDebugVisible(): boolean {
-    return this._editor.raw.isDebugVisible;
-  }
-
-  /**
    * The currently loaded settings.
    */
-  get settings(): ISettingRegistry.ISettings {
+  get settings(): ISettingRegistry.ISettings | null {
     return this._editor.settings;
   }
 
@@ -178,13 +175,6 @@ export class SettingEditor extends Widget {
    */
   save(): Promise<void> {
     return this._editor.raw.save();
-  }
-
-  /**
-   * Toggle the debug functionality.
-   */
-  toggleDebug(): void {
-    this._editor.raw.toggleDebug();
   }
 
   /**
@@ -245,38 +235,33 @@ export class SettingEditor extends Widget {
   /**
    * Handle root level layout state changes.
    */
-  private _onStateChanged(): void {
+  private async _onStateChanged(): Promise<void> {
     this._state.sizes = this._panel.relativeSizes();
     this._state.container = this._editor.state;
-    this._state.container.editor = this._list.editor;
     this._state.container.plugin = this._list.selection;
-    this._saveState()
-      .then(() => {
-        this._setState();
-      })
-      .catch(reason => {
-        console.error('Saving setting editor state failed', reason);
-        this._setState();
-      });
+    try {
+      await this._saveState();
+    } catch (error) {
+      console.error('Saving setting editor state failed', error);
+    }
+    this._setState();
   }
 
   /**
    * Set the state of the setting editor.
    */
-  private _saveState(): Promise<void> {
+  private async _saveState(): Promise<void> {
     const { key, state } = this;
     const value = this._state;
 
     this._saving = true;
-    return state
-      .save(key, value)
-      .then(() => {
-        this._saving = false;
-      })
-      .catch((reason: any) => {
-        this._saving = false;
-        throw reason;
-      });
+    try {
+      await state.save(key, value);
+      this._saving = false;
+    } catch (error) {
+      this._saving = false;
+      throw error;
+    }
   }
 
   /**
@@ -329,7 +314,6 @@ export class SettingEditor extends Widget {
           panel.addWidget(editor);
         }
         editor.settings = settings;
-        list.editor = container.editor;
         list.selection = container.plugin;
         this._setLayout();
       })
@@ -369,11 +353,6 @@ export namespace SettingEditor {
       registry: CommandRegistry;
 
       /**
-       * The debug command ID.
-       */
-      debug: string;
-
-      /**
        * The revert command ID.
        */
       revert: string;
@@ -402,7 +381,7 @@ export namespace SettingEditor {
     /**
      * The optional MIME renderer to use for rendering debug messages.
      */
-    rendermime?: RenderMimeRegistry;
+    rendermime?: IRenderMimeRegistry;
 
     /**
      * The state database used to store layout.
@@ -438,9 +417,6 @@ export namespace SettingEditor {
      * The current plugin being displayed.
      */
     plugin: string;
-
-    editor: 'raw' | 'table';
-
     sizes: number[];
   }
 }
@@ -453,12 +429,16 @@ namespace Private {
    * Populate the instructions text node.
    */
   export function populateInstructionsNode(node: HTMLElement): void {
-    const iconClass = `jp-SettingEditorInstructions-icon jp-JupyterIcon`;
-
     ReactDOM.render(
       <React.Fragment>
         <h2>
-          <span className={iconClass} />
+          <jupyterIcon.react
+            className="jp-SettingEditorInstructions-icon"
+            tag="span"
+            elementPosition="center"
+            height="auto"
+            width="60px"
+          />
           <span className="jp-SettingEditorInstructions-title">Settings</span>
         </h2>
         <span className="jp-SettingEditorInstructions-text">
@@ -496,10 +476,6 @@ namespace Private {
         : {};
 
     saved.container = {
-      editor:
-        container.editor === 'raw' || container.editor === 'table'
-          ? container.editor
-          : DEFAULT_LAYOUT.container.editor,
       plugin:
         typeof container.plugin === 'string'
           ? container.plugin

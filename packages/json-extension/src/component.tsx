@@ -7,7 +7,7 @@ import Highlight from 'react-highlighter';
 
 import JSONTree from 'react-json-tree';
 
-import { JSONArray, JSONObject, JSONValue } from '@phosphor/coreutils';
+import { JSONArray, JSONObject, JSONValue, JSONExt } from '@lumino/coreutils';
 
 import { InputGroup } from '@jupyterlab/ui-components';
 
@@ -15,7 +15,7 @@ import { InputGroup } from '@jupyterlab/ui-components';
  * The properties for the JSON tree component.
  */
 export interface IProps {
-  data: JSONValue;
+  data: NonNullable<JSONValue>;
   metadata?: JSONObject;
 }
 
@@ -71,6 +71,19 @@ export class Component extends React.Component<IProps, IState> {
           }}
           invertTheme={false}
           keyPath={[root]}
+          getItemString={(type, data, itemType, itemString) =>
+            Array.isArray(data) ? (
+              // Always display array type and the number of items i.e. "[] 2 items".
+              <span>
+                {itemType} {itemString}
+              </span>
+            ) : Object.keys(data).length === 0 ? (
+              // Only display object type when it's empty i.e. "{}".
+              <span>{itemType}</span>
+            ) : (
+              null! // Upstream typings don't accept null, but it should be ok
+            )
+          }
           labelRenderer={([label, type]) => {
             // let className = 'cm-variable';
             // if (type === 'root') {
@@ -150,11 +163,11 @@ function objectIncludes(data: JSONValue, query: string): boolean {
 }
 
 function filterPaths(
-  data: JSONValue,
+  data: NonNullable<JSONValue>,
   query: string,
   parent: JSONArray = ['root']
 ): JSONArray {
-  if (Array.isArray(data)) {
+  if (JSONExt.isArray(data)) {
     return data.reduce((result: JSONArray, item: JSONValue, index: number) => {
       if (item && typeof item === 'object' && objectIncludes(item, query)) {
         return [
@@ -166,9 +179,9 @@ function filterPaths(
       return result;
     }, []) as JSONArray;
   }
-  if (typeof data === 'object') {
+  if (JSONExt.isObject(data)) {
     return Object.keys(data).reduce((result: JSONArray, key: string) => {
-      let item = data[key];
+      const item = data[key];
       if (
         item &&
         typeof item === 'object' &&
@@ -183,4 +196,5 @@ function filterPaths(
       return result;
     }, []);
   }
+  return [];
 }

@@ -1,24 +1,17 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import {
-  ArrayExt,
-  each,
-  map,
-  find,
-  filter,
-  toArray
-} from '@phosphor/algorithm';
+import { ArrayExt, each, map, find, filter, toArray } from '@lumino/algorithm';
 
-import { DisposableSet, IDisposable } from '@phosphor/disposable';
+import { DisposableSet, IDisposable } from '@lumino/disposable';
 
-import { IMessageHandler, Message, MessageLoop } from '@phosphor/messaging';
+import { IMessageHandler, Message, MessageLoop } from '@lumino/messaging';
 
-import { AttachedProperty } from '@phosphor/properties';
+import { AttachedProperty } from '@lumino/properties';
 
-import { ISignal, Signal } from '@phosphor/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 import { Time } from '@jupyterlab/coreutils';
 
@@ -84,11 +77,25 @@ export class DocumentWidgetManager implements IDisposable {
     factory: DocumentRegistry.WidgetFactory,
     context: DocumentRegistry.Context
   ): IDocumentWidget {
-    let widget = factory.createNew(context);
-    Private.factoryProperty.set(widget, factory);
+    const widget = factory.createNew(context);
+    this._initializeWidget(widget, factory, context);
+    return widget;
+  }
 
+  /**
+   * When a new widget is created, we need to hook it up
+   * with some signals, update the widget extensions (for
+   * this kind of widget) in the docregistry, among
+   * other things.
+   */
+  private _initializeWidget(
+    widget: IDocumentWidget,
+    factory: DocumentRegistry.WidgetFactory,
+    context: DocumentRegistry.Context
+  ) {
+    Private.factoryProperty.set(widget, factory);
     // Handle widget extensions.
-    let disposables = new DisposableSet();
+    const disposables = new DisposableSet();
     each(this._registry.widgetExtensions(factory.name), extender => {
       disposables.add(extender.createNew(widget, context));
     });
@@ -101,7 +108,6 @@ export class DocumentWidgetManager implements IDisposable {
     void context.ready.then(() => {
       void this.setCaption(widget);
     });
-    return widget;
   }
 
   /**
@@ -116,7 +122,7 @@ export class DocumentWidgetManager implements IDisposable {
     context: DocumentRegistry.Context,
     widget: IDocumentWidget
   ): void {
-    let widgets = Private.widgetsProperty.get(context);
+    const widgets = Private.widgetsProperty.get(context);
     widgets.push(widget);
     MessageLoop.installMessageHook(widget, this);
     widget.addClass(DOCUMENT_CLASS);
@@ -140,12 +146,12 @@ export class DocumentWidgetManager implements IDisposable {
     context: DocumentRegistry.Context,
     widgetName: string
   ): IDocumentWidget | undefined {
-    let widgets = Private.widgetsProperty.get(context);
+    const widgets = Private.widgetsProperty.get(context);
     if (!widgets) {
       return undefined;
     }
     return find(widgets, widget => {
-      let factory = Private.factoryProperty.get(widget);
+      const factory = Private.factoryProperty.get(widget);
       if (!factory) {
         return false;
       }
@@ -176,15 +182,16 @@ export class DocumentWidgetManager implements IDisposable {
    *  if the source widget is not managed by this manager.
    */
   cloneWidget(widget: Widget): IDocumentWidget | undefined {
-    let context = Private.contextProperty.get(widget);
+    const context = Private.contextProperty.get(widget);
     if (!context) {
       return undefined;
     }
-    let factory = Private.factoryProperty.get(widget);
+    const factory = Private.factoryProperty.get(widget);
     if (!factory) {
       return undefined;
     }
-    let newWidget = this.createWidget(factory, context);
+    const newWidget = factory.createNew(context, widget as IDocumentWidget);
+    this._initializeWidget(newWidget, factory, context);
     return newWidget;
   }
 
@@ -194,7 +201,7 @@ export class DocumentWidgetManager implements IDisposable {
    * @param context - The document context object.
    */
   closeWidgets(context: DocumentRegistry.Context): Promise<void> {
-    let widgets = Private.widgetsProperty.get(context);
+    const widgets = Private.widgetsProperty.get(context);
     return Promise.all(
       toArray(map(widgets, widget => this.onClose(widget)))
     ).then(() => undefined);
@@ -207,7 +214,7 @@ export class DocumentWidgetManager implements IDisposable {
    * @param context - The document context object.
    */
   deleteWidgets(context: DocumentRegistry.Context): Promise<void> {
-    let widgets = Private.widgetsProperty.get(context);
+    const widgets = Private.widgetsProperty.get(context);
     return Promise.all(
       toArray(map(widgets, widget => this.onDelete(widget)))
     ).then(() => undefined);
@@ -229,7 +236,7 @@ export class DocumentWidgetManager implements IDisposable {
         void this.onClose(handler as Widget);
         return false;
       case 'activate-request':
-        let context = this.contextForWidget(handler as Widget);
+        const context = this.contextForWidget(handler as Widget);
         if (context) {
           this._activateRequested.emit(context.path);
         }
@@ -245,12 +252,12 @@ export class DocumentWidgetManager implements IDisposable {
    *
    * @param widget - The target widget.
    */
-  protected setCaption(widget: Widget): Promise<void> {
-    let context = Private.contextProperty.get(widget);
+  protected async setCaption(widget: Widget): Promise<void> {
+    const context = Private.contextProperty.get(widget);
     if (!context) {
       return;
     }
-    let model = context.contentsModel;
+    const model = context.contentsModel;
     if (!model) {
       widget.title.caption = '';
       return;
@@ -261,14 +268,14 @@ export class DocumentWidgetManager implements IDisposable {
         if (widget.isDisposed) {
           return;
         }
-        let last = checkpoints[checkpoints.length - 1];
-        let checkpoint = last ? Time.format(last.last_modified) : 'None';
-        let caption = `Name: ${model.name}\nPath: ${model.path}\n`;
-        if (context.model.readOnly) {
+        const last = checkpoints[checkpoints.length - 1];
+        const checkpoint = last ? Time.format(last.last_modified) : 'None';
+        let caption = `Name: ${model!.name}\nPath: ${model!.path}\n`;
+        if (context!.model.readOnly) {
           caption += 'Read-only';
         } else {
           caption +=
-            `Last Saved: ${Time.format(model.last_modified)}\n` +
+            `Last Saved: ${Time.format(model!.last_modified)}\n` +
             `Last Checkpoint: ${checkpoint}`;
         }
         widget.title.caption = caption;
@@ -315,7 +322,7 @@ export class DocumentWidgetManager implements IDisposable {
    */
   private _maybeClose(widget: Widget): Promise<boolean> {
     // Bail if the model is not dirty or other widgets are using the model.)
-    let context = Private.contextProperty.get(widget);
+    const context = Private.contextProperty.get(widget);
     if (!context) {
       return Promise.resolve(true);
     }
@@ -326,22 +333,22 @@ export class DocumentWidgetManager implements IDisposable {
     // Filter by whether the factories are read only.
     widgets = toArray(
       filter(widgets, widget => {
-        let factory = Private.factoryProperty.get(widget);
+        const factory = Private.factoryProperty.get(widget);
         if (!factory) {
           return false;
         }
         return factory.readOnly === false;
       })
     );
-    let factory = Private.factoryProperty.get(widget);
+    const factory = Private.factoryProperty.get(widget);
     if (!factory) {
       return Promise.resolve(true);
     }
-    let model = context.model;
+    const model = context.model;
     if (!model.dirty || widgets.length > 1 || factory.readOnly) {
       return Promise.resolve(true);
     }
-    let fileName = widget.title.label;
+    const fileName = widget.title.label;
     return showDialog({
       title: 'Close without saving?',
       body: `File "${fileName}" has unsaved changes, close without saving?`,
@@ -355,11 +362,11 @@ export class DocumentWidgetManager implements IDisposable {
    * Handle the disposal of a widget.
    */
   private _widgetDisposed(widget: Widget): void {
-    let context = Private.contextProperty.get(widget);
+    const context = Private.contextProperty.get(widget);
     if (!context) {
       return;
     }
-    let widgets = Private.widgetsProperty.get(context);
+    const widgets = Private.widgetsProperty.get(context);
     if (!widgets) {
       return;
     }
@@ -375,7 +382,7 @@ export class DocumentWidgetManager implements IDisposable {
    * Handle the disposal of a widget.
    */
   private _onWidgetDisposed(widget: Widget): void {
-    let disposables = Private.disposablesProperty.get(widget);
+    const disposables = Private.disposablesProperty.get(widget);
     disposables.dispose();
   }
 
@@ -383,7 +390,7 @@ export class DocumentWidgetManager implements IDisposable {
    * Handle a file changed signal for a context.
    */
   private _onFileChanged(context: DocumentRegistry.Context): void {
-    let widgets = Private.widgetsProperty.get(context);
+    const widgets = Private.widgetsProperty.get(context);
     each(widgets, widget => {
       void this.setCaption(widget);
     });
@@ -393,7 +400,7 @@ export class DocumentWidgetManager implements IDisposable {
    * Handle a path changed signal for a context.
    */
   private _onPathChanged(context: DocumentRegistry.Context): void {
-    let widgets = Private.widgetsProperty.get(context);
+    const widgets = Private.widgetsProperty.get(context);
     each(widgets, widget => {
       void this.setCaption(widget);
     });

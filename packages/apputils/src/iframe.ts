@@ -1,7 +1,7 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { Widget } from '@phosphor/widgets';
+import { Widget } from '@lumino/widgets';
 
 /**
  * A phosphor widget which wraps an IFrame.
@@ -141,8 +141,8 @@ namespace Private {
    * Create the main content node of an iframe widget.
    */
   export function createNode(): HTMLElement {
-    let node = document.createElement('div');
-    let iframe = document.createElement('iframe');
+    const node = document.createElement('div');
+    const iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', '');
     iframe.style.height = '100%';
     iframe.style.width = '100%';
